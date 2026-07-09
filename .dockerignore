@@ -1,8 +1,7 @@
 .git
 .github
-.gradle
-build
-out
+.venv
+__pycache__
+*.pyc
 .idea
-*.iml
 .env
