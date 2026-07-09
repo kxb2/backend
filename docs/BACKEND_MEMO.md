@@ -5,7 +5,8 @@
 - 배포: AWS EC2 (t3.small, 서울 ap-northeast-2, Ubuntu 24.04 LTS, 30GB) — 전 개발자 Dockerfile/docker-compose/GitHub Actions(`deploy.yml`) 재사용, Dockerfile만 Python(FastAPI)용으로 교체
 - 프롬프트 생성: Claude API (PRD 기술스택 확정 사항)
 - 이미지 생성: GPT image(기본값) / Gemini 3.5 Flash Image, 어댑터 패턴으로 호출
-- 인증: users 테이블 구현 (A1/A2팀과 방식 통일). 이메일/비밀번호, 비밀번호 해싱, JWT 발급 + 회사메일 필터고려 -> 가장 후순위. 어차피 올인원돼서 엎음.
+- 유저/ 로그인 최종 확정 정책: 사내 이메일(도메인) 제한 없음, 일반 이메일 회원가입/로그인 및 구글 소셜 로그인(OAuth) 동시 지원.
+최초 검토했던 폐쇄형 화이트리스트 방식에서 '일반 유저 가입이 가능한 오픈형 방식'으로 기획 방향이 변경.
 
 
 ## 검토 중 (미확정)
