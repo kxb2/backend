@@ -1,6 +1,7 @@
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
+from app.core.enums import ImageModel, JobStatus
 from app.generations.models import Cut, Generation
 from app.storyboards.models import ReferenceImage, Storyboard
 
@@ -22,7 +23,7 @@ def create_storyboard(
     tone: str | None,
     aspect_ratio: str | None,
     era: str | None,
-    image_model: str,
+    image_model: ImageModel,
     reference_images: list[UploadFile],
 ) -> tuple[Storyboard, Generation]:
     if len(reference_images) > MAX_REFERENCE_IMAGES:
@@ -44,12 +45,12 @@ def create_storyboard(
     for image in reference_images:
         db.add(ReferenceImage(storyboard_id=storyboard.id, image_url=image.filename))
 
-    generation = Generation(storyboard_id=storyboard.id, status="pending")
+    generation = Generation(storyboard_id=storyboard.id, status=JobStatus.PENDING)
     db.add(generation)
     db.flush()
 
     for order_no in range(1, CUT_COUNT + 1):
-        db.add(Cut(storyboard_id=storyboard.id, order_no=order_no, status="pending"))
+        db.add(Cut(storyboard_id=storyboard.id, order_no=order_no, status=JobStatus.PENDING))
 
     db.commit()
     return storyboard, generation

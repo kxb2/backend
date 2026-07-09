@@ -23,7 +23,7 @@ def create_storyboard(
     tone: Annotated[str | None, Form()] = None,
     aspect_ratio: Annotated[str | None, Form()] = None,
     era: Annotated[str | None, Form()] = None,
-    image_model: Annotated[ImageModel, Form()] = "gpt_image",
+    image_model: Annotated[ImageModel, Form()] = ImageModel.GPT_IMAGE,
     reference_images: Annotated[list[UploadFile], File()] = [],
     db: Session = Depends(get_db),
 ) -> StoryboardCreateResponse:

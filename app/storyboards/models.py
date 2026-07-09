@@ -1,9 +1,12 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.enums import ImageModel
 from app.db.base import Base
+
+_image_model_type = Enum(ImageModel, native_enum=False, length=50, validate_strings=True)
 
 
 class Storyboard(Base):
@@ -16,7 +19,7 @@ class Storyboard(Base):
     tone: Mapped[str | None] = mapped_column(String(50))
     aspect_ratio: Mapped[str | None] = mapped_column(String(20))
     era: Mapped[str | None] = mapped_column(String(50))
-    image_model: Mapped[str] = mapped_column(String(50), default="gpt_image")
+    image_model: Mapped[ImageModel] = mapped_column(_image_model_type, default=ImageModel.GPT_IMAGE)
     integrated_prompt: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
