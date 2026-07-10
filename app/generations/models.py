@@ -3,10 +3,12 @@ from datetime import datetime
 from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.core.enums import JobStatus
+from app.core.enums import JobStatus, enum_values
 from app.db.base import Base
 
-_status_type = Enum(JobStatus, native_enum=False, length=20, validate_strings=True)
+_status_type = Enum(
+    JobStatus, native_enum=False, length=20, validate_strings=True, values_callable=enum_values
+)
 
 
 # 9컷 생성 작업 추적
@@ -30,7 +32,9 @@ class Cut(Base):
     __table_args__ = (UniqueConstraint("storyboard_id", "order_no", name="uq_cuts_storyboard_id_order_no"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    storyboard_id: Mapped[int] = mapped_column(ForeignKey("storyboards.id", ondelete="CASCADE"))
+    storyboard_id: Mapped[int] = mapped_column(
+        ForeignKey("storyboards.id", ondelete="CASCADE"), index=True
+    )
     order_no: Mapped[int] = mapped_column(Integer)
     prompt_text: Mapped[str | None] = mapped_column(Text)
     angle_type: Mapped[str | None] = mapped_column(String(50))

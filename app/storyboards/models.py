@@ -3,10 +3,15 @@ from datetime import datetime
 from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.enums import ImageModel
+from app.core.enums import Genre, ImageModel, enum_values
 from app.db.base import Base
 
-_image_model_type = Enum(ImageModel, native_enum=False, length=50, validate_strings=True)
+_image_model_type = Enum(
+    ImageModel, native_enum=False, length=50, validate_strings=True, values_callable=enum_values
+)
+_genre_type = Enum(
+    Genre, native_enum=False, length=50, validate_strings=True, values_callable=enum_values
+)
 
 
 class Storyboard(Base):
@@ -14,7 +19,7 @@ class Storyboard(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     scenario_text: Mapped[str] = mapped_column(Text)
-    genre: Mapped[str] = mapped_column(String(50))
+    genre: Mapped[Genre] = mapped_column(_genre_type)
     style: Mapped[str | None] = mapped_column(String(50))
     tone: Mapped[str | None] = mapped_column(String(50))
     aspect_ratio: Mapped[str | None] = mapped_column(String(20))
@@ -35,7 +40,9 @@ class ReferenceImage(Base):
     __tablename__ = "reference_images"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    storyboard_id: Mapped[int] = mapped_column(ForeignKey("storyboards.id"))
+    storyboard_id: Mapped[int] = mapped_column(
+        ForeignKey("storyboards.id", ondelete="CASCADE"), index=True
+    )
     image_url: Mapped[str] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

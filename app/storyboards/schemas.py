@@ -1,9 +1,10 @@
 from datetime import datetime
 
-from app.core.enums import ImageModel, JobStatus
+from app.core.enums import Genre, ImageModel, JobStatus
 from app.core.schema import CamelModel
 
 __all__ = [
+    "Genre",
     "ImageModel",
     "ReferenceImageOut",
     "StoryboardCreateResponse",
@@ -26,7 +27,7 @@ class ReferenceImageOut(CamelModel):
 class StoryboardDetailResponse(CamelModel):
     id: int
     scenario_text: str
-    genre: str
+    genre: Genre
     style: str | None
     tone: str | None
     aspect_ratio: str | None

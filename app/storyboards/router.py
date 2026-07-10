@@ -7,6 +7,7 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from app.db.session import get_db
 from app.storyboards import service
 from app.storyboards.schemas import (
+    Genre,
     ImageModel,
     StoryboardCreateResponse,
     StoryboardDetailResponse,
@@ -18,8 +19,8 @@ router = APIRouter(prefix="/storyboards", tags=["storyboards"])
 
 @router.post("", response_model=StoryboardCreateResponse, status_code=201)
 def create_storyboard(
-    scenario_text: Annotated[str, Form()],
-    genre: Annotated[str, Form()],
+    scenario_text: Annotated[str, Form(min_length=1)],
+    genre: Annotated[Genre, Form()],
     style: Annotated[str | None, Form()] = None,
     tone: Annotated[str | None, Form()] = None,
     aspect_ratio: Annotated[str | None, Form()] = None,
