@@ -2,7 +2,7 @@ from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
 from app.core import storage
-from app.core.enums import ImageModel, JobStatus
+from app.core.enums import Genre, ImageModel, JobStatus
 from app.generations.models import Cut, Generation
 from app.storyboards.models import ReferenceImage, Storyboard
 
@@ -19,7 +19,7 @@ def create_storyboard(
     db: Session,
     *,
     scenario_text: str,
-    genre: str,
+    genre: Genre,
     style: str | None,
     tone: str | None,
     aspect_ratio: str | None,
@@ -45,17 +45,27 @@ def create_storyboard(
     db.add(storyboard)
     db.flush()
 
-    for image_url in storage.upload_images_parallel(reference_data, folder="reference-images"):
-        db.add(ReferenceImage(storyboard_id=storyboard.id, image_url=image_url))
+    uploaded_urls = storage.upload_images_parallel(reference_data, folder="reference-images")
 
-    generation = Generation(storyboard_id=storyboard.id, status=JobStatus.PENDING)
-    db.add(generation)
-    db.flush()
+    try:
+        for image_url in uploaded_urls:
+            db.add(ReferenceImage(storyboard_id=storyboard.id, image_url=image_url))
 
-    for order_no in range(1, CUT_COUNT + 1):
-        db.add(Cut(storyboard_id=storyboard.id, order_no=order_no, status=JobStatus.PENDING))
+        generation = Generation(storyboard_id=storyboard.id, status=JobStatus.PENDING)
+        db.add(generation)
+        db.flush()
 
-    db.commit()
+        for order_no in range(1, CUT_COUNT + 1):
+            db.add(Cut(storyboard_id=storyboard.id, order_no=order_no, status=JobStatus.PENDING))
+
+        db.commit()
+    except Exception:
+        db.rollback()
+        # DB 저장 실패해도 R2 업로드는 이미 끝난 상태라, 참조 없는 파일이 남지 않도록 정리
+        for url in uploaded_urls:
+            storage.delete_file(url)
+        raise
+
     return storyboard, generation
 
 
