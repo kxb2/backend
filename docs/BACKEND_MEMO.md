@@ -15,6 +15,8 @@
 - 이미지 스토리지: Cloudflare R2 — 대역폭 무료라 이미지 위주 프로젝트에 유리
 - 마이그레이션: Alembic 예정 (models.py DB 스키마 안정화된후 세팅)
 - EC2 지원받으면: docker-compose.prod.yml에 nginx나 HTTPS설정 / vercel은 기본적으로 https 서빙, ec2 앞에 도메인 + HTTPS(nginx reverse proxy + Let's Encrypt 등)를 붙여야 할 수도
+- 로컬 개발 DB와 배포 DB는 **분리 안 하고 하나만 사용하기로 결정**  `PROD_DATABASE_URL` secret은 로컬 `.env`의 `DATABASE_URL`과 **동일한 값**으로 등록하면 됨(`docker-compose.prod.yml`이 이미 그 이름을 참조하고 있어서 코드 수정 불필요). 대신 **실제 배포(`develop→main`) 직전에 테스트용 row 정리**하는 걸 체크리스트에 넣기 (storyboards 삭제 시 reference_images/generations/cuts는 cascade로 같이 지워짐)
+
 
 ## Git 브랜치 워크플로우
 - `main`: 배포용. **여기 push되면 GitHub Actions(`deploy.yml`)가 자동으로 EC2에 배포**함
