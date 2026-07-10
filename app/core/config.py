@@ -10,6 +10,12 @@ class Settings(BaseSettings):
     database_url: str
     cors_allowed_origins: str = "http://localhost:3000"
 
+    r2_endpoint_url: str
+    r2_access_key_id: str
+    r2_secret_access_key: str
+    r2_bucket_name: str
+    r2_public_url: str
+
     @property
     def cors_allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
