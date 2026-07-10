@@ -1,6 +1,7 @@
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
+from app.core import storage
 from app.core.enums import ImageModel, JobStatus
 from app.generations.models import Cut, Generation
 from app.storyboards.models import ReferenceImage, Storyboard
@@ -29,6 +30,9 @@ def create_storyboard(
     if len(reference_images) > MAX_REFERENCE_IMAGES:
         raise ReferenceImageLimitExceeded(MAX_REFERENCE_IMAGES)
 
+    # R2 업로드 전에 전체 파일을 먼저 검증 (하나라도 형식/용량 문제면 업로드 자체를 하지 않음)
+    reference_data = [(storage.validate_image(image), image.content_type) for image in reference_images]
+
     storyboard = Storyboard(
         scenario_text=scenario_text,
         genre=genre,
@@ -41,9 +45,8 @@ def create_storyboard(
     db.add(storyboard)
     db.flush()
 
-    # 이미지 스토리지(Cloudflare R2 등) 미확정 상태라 실제 업로드 대신 파일명만 임시 저장
-    for image in reference_images:
-        db.add(ReferenceImage(storyboard_id=storyboard.id, image_url=image.filename))
+    for image_url in storage.upload_images_parallel(reference_data, folder="reference-images"):
+        db.add(ReferenceImage(storyboard_id=storyboard.id, image_url=image_url))
 
     generation = Generation(storyboard_id=storyboard.id, status=JobStatus.PENDING)
     db.add(generation)

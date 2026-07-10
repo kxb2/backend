@@ -8,12 +8,13 @@
 - DB: Supabase(Postgres) — 관계형 구조(스토리보드-컷-캔버스-Export) 적합
 - ORM: SQLAlchemy
 - 드라이버: psycopg2-binary
+- 프론트 배포는 Vercel, 백엔드 배포는 AWS EC2
 
 
 ## 검토 중 (미확정)
 - 이미지 스토리지: Cloudflare R2 — 대역폭 무료라 이미지 위주 프로젝트에 유리
 - 마이그레이션: Alembic 예정 (models.py DB 스키마 안정화된후 세팅)
-
+- EC2 지원받으면: docker-compose.prod.yml에 nginx나 HTTPS설정 / vercel은 기본적으로 https 서빙, ec2 앞에 도메인 + HTTPS(nginx reverse proxy + Let's Encrypt 등)를 붙여야 할 수도
 
 ## Git 브랜치 워크플로우
 - `main`: 배포용. **여기 push되면 GitHub Actions(`deploy.yml`)가 자동으로 EC2에 배포**함
@@ -54,7 +55,7 @@
 - [ ] 9컷 생성 요청 — 생성 버튼 클릭 시 AI에 스토리보드 값 전달, 가능하면 병렬 처리
 - [ ] 컷별 프롬프트 적용 — 컷마다 프롬프트 연결
 - [ ] 샷별 프롬프트 3000자 제한 — 서버 검증 — 컷별 프롬프트 적용과 함께
-- [ ] AI 어댑터 GPT/Gemini/Claude 호출할 때 실패/타임아웃/503 처리
+- [ ] AI 어댑터 GPT/Gemini/Claude 호출할 때 실패/타임아웃/503 처리(test파일로)
 - [ ] 컷 생성 상태 확인 — 대기/생성/완료/실패 상태 주기적 확인 - 2순위
 - [ ] 컷 재생성 — 특정 컷만 재생성, 컷ID 부여 필요 - 2순위
 - [ ] 이미지, 파일 보존기간 후 삭제 (내보내기 애들도 포함인지 물어보고 작업하기)
