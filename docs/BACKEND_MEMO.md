@@ -15,7 +15,7 @@
 - 이미지 스토리지: Cloudflare R2 — 대역폭 무료라 이미지 위주 프로젝트에 유리
 - 마이그레이션: Alembic 예정 (models.py DB 스키마 안정화된후 세팅)
 - EC2 지원받으면: docker-compose.prod.yml에 nginx나 HTTPS설정 / vercel은 기본적으로 https 서빙, ec2 앞에 도메인 + HTTPS(nginx reverse proxy + Let's Encrypt 등)를 붙여야 할 수도
-- 로컬 개발 DB와 배포 DB는 **분리 안 하고 하나만 사용하기로 결정**  `PROD_DATABASE_URL` secret은 로컬 `.env`의 `DATABASE_URL`과 **동일한 값**으로 등록하면 됨(`docker-compose.prod.yml`이 이미 그 이름을 참조하고 있어서 코드 수정 불필요). 대신 **실제 배포(`develop→main`) 직전에 테스트용 row 정리**하는 걸 체크리스트에 넣기 (storyboards 삭제 시 reference_images/generations/cuts는 cascade로 같이 지워짐)
+- 로컬 개발 DB와 배포 DB는 **분리 안 하고 하나만 사용하기로 결정**  `PROD_DATABASE_URL` secret은 로컬 `.env`의 `DATABASE_URL`과 **동일한 값**으로 등록하면 됨(`docker-compose.prod.yml`이 이미 그 이름을 참조하고 있어서 코드 수정 불필요). 대신 **실제 배포(`develop→main`) 직전에 테스트용 row 정리**하는 걸 체크리스트에 넣기 (storyboards 삭제 시 reference_images/generations/cuts는 cascade로 같이 지워짐) → 의견 물어보거나 더 나은 방향 있으면 배포 DB 따로 할수도 있고, 환경에 따라 자동화나... 다른 방향 생각해보는중.
 
 
 ## Git 브랜치 워크플로우
@@ -108,3 +108,12 @@
 
 ## 나중에 필요하면 고려 (지금은 안 함)
 - **`POST /storyboards` idempotency key**: storyboard 저장은 성공했는데 9컷 생성 job 등록(enqueue)만 실패하는 경우, 재시도 시 storyboard row가 중복 생성될 수 있음. 문제 되면 같은 입력(or idempotency key)이면 기존 storyboard를 재사용하도록 처리하는 것 고려. 60시간 MVP라 지금 우선순위 아님 — 중복 row 생겨도 당장은 무해함.
+
+
+## 전체 파이프라인 그림 (A/B/C조)
+> 회사 최종 목표: A/B/C 세 팀 프로젝트를 나중에 하나의 올인원 플랫폼으로 합침.
+> 기획(텍스트) → [B] 스토리보드 9컷(그리드) 콘티 + 통합 프롬프트 → [A] 영상 AI(첫 프레임 정밀 생성 + 15초 영상화) → [C] 합치기 + 음악·자막
+
+- **B조(우리)**: 시나리오 텍스트 → 9컷 스토리보드 그리드 + 통합 영문 프롬프트. **"기획/콘티" 단계 산출물만 만듦**
+- **A조**: 프롬프트 → 이미지·영상 생성(보관함 저장) + 반대로 이미지 넣으면 프롬프트 역추출 → 재생성까지 이어지는 생성 허브. → PRD의 **"영상 AI"** 단계에 해당. B가 뽑은 그리드+프롬프트를 A 도구에 넣어서 실제 15초 영상으로 만드는 흐름.
+- **C조**: 텍스트로 효과음 생성("유리 깨지는 소리" 같은 거) + 영상·음성 → 자막(SRT/ASS) 자동 생성. → PRD의 **"합치기 → 음악·자막"** 후반작업 단계, A조가 뽑은 영상을 받아서 처리.
