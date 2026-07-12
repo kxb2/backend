@@ -29,6 +29,7 @@ def create_storyboard(
     reference_images: Annotated[list[UploadFile | str], File()] = [],
     db: Session = Depends(get_db),
 ) -> StoryboardCreateResponse:
+    """스토리보드 생성"""
     # Swagger UI 등 일부 클라이언트가 파일 미선택 시 빈 문자열을 보냄 — 그 경우만 "파일 없음"으로 처리.
     # fastapi.UploadFile은 starlette.datastructures.UploadFile의 서브클래스라, 파일 개수가 많을 때
     # FastAPI가 서브클래스로 감싸지 않고 부모 클래스 그대로 넘겨주는 경우가 있어 부모 클래스로 검사한다.
@@ -66,6 +67,7 @@ def create_storyboard(
 
 @router.get("/{storyboard_id}", response_model=StoryboardDetailResponse)
 def get_storyboard(storyboard_id: int, db: Session = Depends(get_db)):
+    """스토리보드 조회"""
     storyboard = service.get_storyboard(db, storyboard_id)
     if storyboard is None:
         raise HTTPException(status_code=404, detail="storyboard not found")
@@ -74,6 +76,7 @@ def get_storyboard(storyboard_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{storyboard_id}/prompt", response_model=StoryboardPromptResponse)
 def get_storyboard_prompt(storyboard_id: int, db: Session = Depends(get_db)) -> StoryboardPromptResponse:
+    """스토리보드 통합 프롬프트 조회"""
     storyboard = service.get_storyboard(db, storyboard_id)
     if storyboard is None:
         raise HTTPException(status_code=404, detail="storyboard not found")

@@ -27,6 +27,7 @@ def create_storyboard(
     image_model: ImageModel,
     reference_images: list[UploadFile],
 ) -> tuple[Storyboard, Generation]:
+    """스토리보드 생성"""
     if len(reference_images) > MAX_REFERENCE_IMAGES:
         raise ReferenceImageLimitExceeded(MAX_REFERENCE_IMAGES)
 
@@ -70,4 +71,5 @@ def create_storyboard(
 
 
 def get_storyboard(db: Session, storyboard_id: int) -> Storyboard | None:
+    """스토리보드 조회"""
     return db.get(Storyboard, storyboard_id)
