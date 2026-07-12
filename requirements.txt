@@ -5,3 +5,4 @@ psycopg2-binary==2.9.10
 pydantic-settings==2.10.1
 python-multipart==0.0.20
 boto3==1.43.45
+anthropic==0.116.0

@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     r2_bucket_name: str
     r2_public_url: str
 
+    anthropic_api_key: str
+    anthropic_model: str = "claude-sonnet-5"
+
     @property
     def cors_allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
