@@ -5,15 +5,18 @@
 import anthropic
 
 from app.ai.base import PromptAdapter
-from app.ai.exceptions import AIAdapterError, AIAdapterRequestError, AIAdapterTimeoutError, AIAdapterUnavailableError
+from app.ai.exceptions import (
+    RETRYABLE_STATUS_CODES,
+    AIAdapterError,
+    AIAdapterRequestError,
+    AIAdapterTimeoutError,
+    AIAdapterUnavailableError,
+)
 from app.ai.retry import call_with_retry
 from app.core.config import get_settings
 from app.core.enums import Genre
 
 MAX_TOKENS = 1500
-
-# Anthropic 자체 서비스 문제(과부하/재시작 등)로, 재시도하면 성공할 수 있는 상태 코드
-RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504, 529}
 
 # PRD 문서에서 뽑아낸 규칙들 영문으로 넣어놓음
 SYSTEM_PROMPT = """You are a cinematography prompt writer for an AI storyboard tool.

@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     anthropic_api_key: str
     anthropic_model: str = "claude-sonnet-5"
 
+    openai_api_key: str
+    openai_image_model: str = "gpt-image-1"
+
+    gemini_api_key: str
+    gemini_image_model: str = "gemini-3.5-flash-image"
+
     @property
     def cors_allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
