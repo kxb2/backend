@@ -1,9 +1,15 @@
+from io import BytesIO
 from unittest.mock import Mock
 
 import pytest
+from PIL import Image
 
+from app.ai.exceptions import AIAdapterError
 from app.generations.service import (
     PromptValidationError,
+    _build_grid_image,
+    _generate_and_apply_prompt,
+    _generate_cut_images,
     apply_integrated_prompt,
     split_shots,
     validate_prompt_length,
@@ -129,3 +135,139 @@ class TestApplyIntegratedPrompt:
 
         db.commit.assert_not_called()
         assert storyboard.integrated_prompt is None
+
+
+class _FakePromptAdapter:
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls = 0
+
+    def generate_prompt(self, **kwargs):
+        self.calls += 1
+        response = self._responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+class TestGenerateAndApplyPrompt:
+    def test_succeeds_on_first_try(self):
+        """Claude가 처음부터 정상 포맷 주면 재시도 없이 성공"""
+        storyboard = _storyboard_with_cuts()
+        adapter = _FakePromptAdapter([_integrated_prompt()])
+
+        assert _generate_and_apply_prompt(Mock(), storyboard, adapter) is True
+        assert adapter.calls == 1
+
+    def test_retries_once_after_malformed_response_then_succeeds(self):
+        """첫 응답이 형식 오류면 한 번 더 새로 생성해서 성공"""
+        storyboard = _storyboard_with_cuts()
+        adapter = _FakePromptAdapter(["malformed, no shot labels", _integrated_prompt()])
+
+        assert _generate_and_apply_prompt(Mock(), storyboard, adapter) is True
+        assert adapter.calls == 2
+
+    def test_returns_false_after_max_attempts_all_malformed(self):
+        """MAX_PROMPT_ATTEMPTS(2)번 다 형식 오류면 False 반환"""
+        storyboard = _storyboard_with_cuts()
+        adapter = _FakePromptAdapter(["malformed 1", "malformed 2"])
+
+        assert _generate_and_apply_prompt(Mock(), storyboard, adapter) is False
+        assert adapter.calls == 2
+
+    def test_retries_after_adapter_error_too(self):
+        """Claude 호출 자체가(재시도 다 쓰고) 실패해도 service.py에서 한 번 더 시도"""
+        storyboard = _storyboard_with_cuts()
+        adapter = _FakePromptAdapter([AIAdapterError("claude down"), _integrated_prompt()])
+
+        assert _generate_and_apply_prompt(Mock(), storyboard, adapter) is True
+        assert adapter.calls == 2
+
+
+class _FakeImageAdapter:
+    def __init__(self, responses_by_prompt):
+        self._responses = responses_by_prompt
+        self.calls: list[tuple[str, str | None]] = []
+
+    def generate_image(self, *, prompt_text, aspect_ratio=None):
+        self.calls.append((prompt_text, aspect_ratio))
+        response = self._responses[prompt_text]
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+def _cuts_with_prompts(count: int = 9) -> list[Cut]:
+    cuts = []
+    for order_no in range(1, count + 1):
+        cut = Cut(id=order_no, order_no=order_no, prompt_text=f"prompt-{order_no}")
+        cuts.append(cut)
+    return cuts
+
+
+class TestGenerateCutImages:
+    def test_all_succeed_maps_cut_id_to_url(self):
+        """9개 컷 성공하면 각 cut.id에 맞는 이미지 URL이 정확히 매핑되고, aspect_ratio가 모든 호출에 전달되는지"""
+        cuts = _cuts_with_prompts()
+        responses = {f"prompt-{n}": f"https://pub-x.r2.dev/cuts/{n}.png" for n in range(1, 10)}
+        adapter = _FakeImageAdapter(responses)
+
+        results = _generate_cut_images(adapter, cuts, aspect_ratio="16:9")
+
+        for cut in cuts:
+            assert results[cut.id] == f"https://pub-x.r2.dev/cuts/{cut.order_no}.png"
+        assert all(call[1] == "16:9" for call in adapter.calls)
+
+    def test_failed_cuts_map_to_none_without_affecting_others(self):
+        """일부 컷만 실패해도(AIAdapterError) 나머지 컷은 정상적으로 URL 반환"""
+        cuts = _cuts_with_prompts()
+        responses = {f"prompt-{n}": f"https://pub-x.r2.dev/cuts/{n}.png" for n in range(1, 10)}
+        responses["prompt-5"] = AIAdapterError("image gen failed")
+        adapter = _FakeImageAdapter(responses)
+
+        results = _generate_cut_images(adapter, cuts, aspect_ratio=None)
+
+        assert results[5] is None
+        assert results[1] == "https://pub-x.r2.dev/cuts/1.png"
+        assert results[9] == "https://pub-x.r2.dev/cuts/9.png"
+
+    def test_non_ai_adapter_error_also_fails_only_that_cut(self):
+        """R2 업로드 실패처럼 AIAdapterError가 아닌 예외도, 그 컷만 실패 처리되고 나머지·전체 흐름은 안 죽나"""
+        cuts = _cuts_with_prompts()
+        responses = {f"prompt-{n}": f"https://pub-x.r2.dev/cuts/{n}.png" for n in range(1, 10)}
+        responses["prompt-5"] = RuntimeError("R2 upload failed")
+        adapter = _FakeImageAdapter(responses)
+
+        results = _generate_cut_images(adapter, cuts, aspect_ratio=None)
+
+        assert results[5] is None
+        assert results[1] == "https://pub-x.r2.dev/cuts/1.png"
+        assert results[9] == "https://pub-x.r2.dev/cuts/9.png"
+
+
+def _solid_png_bytes(color: tuple[int, int, int], size: tuple[int, int] = (2, 2)) -> bytes:
+    image = Image.new("RGB", size, color)
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+class TestBuildGridImage:
+    def test_composes_nine_tiles_into_3x3_grid_in_order(self, monkeypatch):
+        """9개 타일을 순서대로 3x3으로 정확히 배치하는지"""
+        colors = [(i * 25, 0, 0) for i in range(9)]
+        urls = [f"https://pub-x.r2.dev/cuts/{i}.png" for i in range(9)]
+        tile_bytes_by_url = {url: _solid_png_bytes(colors[i]) for i, url in enumerate(urls)}
+
+        monkeypatch.setattr(
+            "app.generations.service.httpx.get",
+            lambda url, **kwargs: Mock(content=tile_bytes_by_url[url]),
+        )
+
+        grid_bytes = _build_grid_image(urls)
+        grid = Image.open(BytesIO(grid_bytes))
+
+        assert grid.size == (6, 6)  # 2x2 타일 9개 -> 6x6
+        for index, color in enumerate(colors):
+            row, col = divmod(index, 3)
+            assert grid.getpixel((col * 2, row * 2)) == color

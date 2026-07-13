@@ -30,6 +30,8 @@ class Generation(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
+    storyboard: Mapped["Storyboard"] = relationship(back_populates="generation")
+
 
 class Cut(Base):
     __tablename__ = "cuts"

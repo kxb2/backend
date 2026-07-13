@@ -19,3 +19,8 @@ class AIAdapterUnavailableError(AIAdapterError):
 
 class AIAdapterRequestError(AIAdapterError):
     """400/401 등 요청 자체가 잘못되어 재시도해도 성공할 수 없는 경우. 재시도 대상 X."""
+
+
+# GPT/Gemini/Claude 세 어댑터가 공통으로 쓰는, 재시도하면 성공할 가능성이 있는 HTTP 상태 코드.
+# 429=rate limit, 5xx=서버 과부하/일시 장애, 529=Anthropic 전용 overloaded.
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504, 529}
