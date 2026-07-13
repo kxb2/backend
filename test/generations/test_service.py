@@ -230,6 +230,19 @@ class TestGenerateCutImages:
         assert results[1] == "https://pub-x.r2.dev/cuts/1.png"
         assert results[9] == "https://pub-x.r2.dev/cuts/9.png"
 
+    def test_non_ai_adapter_error_also_fails_only_that_cut(self):
+        """R2 업로드 실패처럼 AIAdapterError가 아닌 예외도, 그 컷만 실패 처리되고 나머지·전체 흐름은 안 죽는지"""
+        cuts = _cuts_with_prompts()
+        responses = {f"prompt-{n}": f"https://pub-x.r2.dev/cuts/{n}.png" for n in range(1, 10)}
+        responses["prompt-5"] = RuntimeError("R2 upload failed")
+        adapter = _FakeImageAdapter(responses)
+
+        results = _generate_cut_images(adapter, cuts, aspect_ratio=None)
+
+        assert results[5] is None
+        assert results[1] == "https://pub-x.r2.dev/cuts/1.png"
+        assert results[9] == "https://pub-x.r2.dev/cuts/9.png"
+
 
 def _solid_png_bytes(color: tuple[int, int, int], size: tuple[int, int] = (2, 2)) -> bytes:
     image = Image.new("RGB", size, color)
@@ -247,7 +260,7 @@ class TestBuildGridImage:
 
         monkeypatch.setattr(
             "app.generations.service.httpx.get",
-            lambda url: Mock(content=tile_bytes_by_url[url]),
+            lambda url, **kwargs: Mock(content=tile_bytes_by_url[url]),
         )
 
         grid_bytes = _build_grid_image(urls)

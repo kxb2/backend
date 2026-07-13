@@ -124,9 +124,7 @@ class GeminiImageAdapter(ImageAdapter):
                     contents=prompt_text,
                     config=config,
                 )
-            except genai_errors.APIError as exc:
-                raise _map_gemini_error(exc) from exc
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
+            except (genai_errors.APIError, httpx.TimeoutException, httpx.TransportError) as exc:
                 raise _map_gemini_error(exc) from exc
 
             candidates = response.candidates or []

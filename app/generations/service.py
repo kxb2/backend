@@ -120,7 +120,7 @@ def _generate_one_cut_image(
     try:
         url = image_adapter.generate_image(prompt_text=cut.prompt_text, aspect_ratio=aspect_ratio)
         return cut.id, url
-    except AIAdapterError as exc:
+    except Exception as exc:  # noqa: BLE001 — R2 업로드 실패 등 AIAdapterError 밖의 에러도 이 컷만 실패 처리
         logger.error("컷 %d(id=%d) 이미지 생성 실패: %s", cut.order_no, cut.id, exc)
         return cut.id, None
 
@@ -138,7 +138,7 @@ def _generate_cut_images(
 
 def _build_grid_image(cut_image_urls: list[str]) -> bytes:
     """order_no 순서로 정렬된 9개 이미지 URL을 내려받아 3x3 그리드 1장(PNG)으로 합성."""
-    images = [Image.open(BytesIO(httpx.get(url).content)) for url in cut_image_urls]
+    images = [Image.open(BytesIO(httpx.get(url, timeout=30.0).content)) for url in cut_image_urls]
     tile_size = images[0].size
     images = [image if image.size == tile_size else image.resize(tile_size) for image in images]
 
@@ -192,6 +192,17 @@ def run_generation(storyboard_id: int) -> None:
             generation.status = JobStatus.COMPLETED
         else:
             generation.status = JobStatus.FAILED
+        db.commit()
+    except Exception:
+        # 위에서 예상하지 못한 에러(그리드 다운로드 실패 등)가 나도 PROCESSING에 영원히 멈추지 않도록,
+        # 최종적으로는 반드시 FAILED로 확정한다.
+        logger.exception("run_generation 실패 (storyboard_id=%d)", storyboard_id)
+        db.rollback()
+        storyboard = db.get(Storyboard, storyboard_id)
+        storyboard.generation.status = JobStatus.FAILED
+        for cut in storyboard.cuts:
+            if cut.status != JobStatus.COMPLETED:
+                cut.status = JobStatus.FAILED
         db.commit()
     finally:
         db.close()
