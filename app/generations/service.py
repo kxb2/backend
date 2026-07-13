@@ -1,4 +1,4 @@
-"""9컷 생성 상태 조회, AI 어댑터(app/ai) 호출 오케스트레이션·재시도"""
+"""9컷 생성 상태 조회, AI 어댑터(app/ai) 호출 전체 과정 명령·재시도"""
 
 import re
 
@@ -9,18 +9,18 @@ from app.storyboards.models import Storyboard
 
 MAX_INTEGRATED_PROMPT_LENGTH = 3000
 
-# Claude 출력의 "Shot 1: ...", "Shot 2: ..." 라벨을 순번과 함께 찾는다.
+# Claude 출력의 "Shot 1: ...", "Shot 2: ..." 라벨을 순번과 함께 찾기
 _SHOT_PATTERN = re.compile(r"Shot\s*(\d+)\s*:\s*", re.IGNORECASE)
 
 
 class PromptValidationError(Exception):
-    """Claude가 생성한 통합 프롬프트가 길이/형식 요구사항을 만족하지 못한 경우."""
+    """Claude가 생성한 통합 프롬프트가 길이/형식 요구사항을 만족 못한 경우."""
 
 
 def validate_prompt_length(
     integrated_prompt: str, *, max_length: int = MAX_INTEGRATED_PROMPT_LENGTH
 ) -> None:
-    """샷별 프롬프트 합계(통합 프롬프트 전체 길이)가 max_length를 넘지 않는지 검증한다."""
+    """샷별 프롬프트 합계(통합 프롬프트 전체 길이)가 max_length를 넘지 않는지 검증."""
     if len(integrated_prompt) > max_length:
         raise PromptValidationError(
             f"통합 프롬프트가 {max_length}자를 초과했습니다 (현재 {len(integrated_prompt)}자)"
@@ -28,7 +28,7 @@ def validate_prompt_length(
 
 
 def split_shots(integrated_prompt: str) -> dict[int, str]:
-    """"Shot 1: ...\\nShot 2: ..." 형태의 통합 프롬프트를 {컷 순번: 프롬프트 텍스트}로 분리한다."""
+    """"Shot 1: ...\\nShot 2: ..." 형태의 통합 프롬프트를 {컷 순번: 프롬프트 텍스트}로 분리."""
     matches = list(_SHOT_PATTERN.finditer(integrated_prompt))
     if len(matches) != CUT_COUNT:
         raise PromptValidationError(
@@ -54,7 +54,7 @@ def split_shots(integrated_prompt: str) -> dict[int, str]:
 
 
 def apply_integrated_prompt(db: Session, storyboard: Storyboard, integrated_prompt: str) -> None:
-    """Claude가 생성한 통합 프롬프트를 검증한 뒤 스토리보드와 각 컷에 반영한다."""
+    """Claude가 생성한 통합 프롬프트를 → 길이 검증, 샷 분리, 순번 일치 확인후 → 스토리보드와 컷에 반영."""
     validate_prompt_length(integrated_prompt)
     shots = split_shots(integrated_prompt)
 

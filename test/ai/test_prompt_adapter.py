@@ -6,6 +6,7 @@ from app.ai.exceptions import AIAdapterError, AIAdapterRequestError, AIAdapterUn
 from app.ai.prompt_adapter import ClaudePromptAdapter
 from app.core.enums import Genre
 
+"""Claude 프롬프트 생성 어댑터 테스트용 파일"""
 
 class _FakeTextBlock:
     def __init__(self, text):
@@ -55,6 +56,7 @@ def _no_sleep(monkeypatch):
 
 
 def test_returns_response_text():
+    """Claude 응답의 텍스트 블록들을 이어붙여 정상 반환하는지"""
     adapter, client = _adapter([_FakeMessage("Shot 1: ...\nShot 2: ...")])
 
     result = adapter.generate_prompt(scenario_text="한 남자가 걷는다", genre=Genre.DRAMA)
@@ -64,6 +66,7 @@ def test_returns_response_text():
 
 
 def test_sends_text_only_when_no_reference_images():
+    """레퍼런스 이미지 없으면 텍스트 블록만 전송하는지"""
     adapter, client = _adapter([_FakeMessage("ok")])
 
     adapter.generate_prompt(scenario_text="scenario", genre=Genre.ACTION)
@@ -74,6 +77,7 @@ def test_sends_text_only_when_no_reference_images():
 
 
 def test_attaches_reference_images_as_url_blocks():
+    """레퍼런스 이미지 있으면 URL 이미지 블록으로 첨부되는지"""
     adapter, client = _adapter([_FakeMessage("ok")])
 
     adapter.generate_prompt(
@@ -89,6 +93,7 @@ def test_attaches_reference_images_as_url_blocks():
 
 
 def test_timeout_is_retried_then_succeeds():
+    """타임아웃 나면 재시도해서 결국 성공하는지 (호출 2회)"""
     request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
     adapter, client = _adapter([anthropic.APITimeoutError(request=request), _FakeMessage("recovered")])
 
@@ -97,6 +102,7 @@ def test_timeout_is_retried_then_succeeds():
 
 
 def test_rate_limit_is_retryable():
+    """429(너무 많은 요청)도 재시도 대상인지 (호출 2회)"""
     adapter, client = _adapter([_status_error(anthropic.RateLimitError, 429), _FakeMessage("recovered")])
 
     assert adapter.generate_prompt(scenario_text="s", genre=Genre.THRILLER) == "recovered"
@@ -104,6 +110,7 @@ def test_rate_limit_is_retryable():
 
 
 def test_bad_request_is_not_retried():
+    """400(잘못된 요청)은 재시도 없이 바로 실패하는지 (호출 1회)"""
     adapter, client = _adapter([_status_error(anthropic.BadRequestError, 400)])
 
     with pytest.raises(AIAdapterRequestError):
@@ -113,6 +120,7 @@ def test_bad_request_is_not_retried():
 
 
 def test_exhausting_retries_raises_unavailable_error():
+    """503(서버 과부하, 점검)이 계속되면 재시도 다 쓰고 에러 전파되는지 (호출 3회)"""
     responses = [_status_error(anthropic.APIStatusError, 503) for _ in range(3)]
     adapter, client = _adapter(responses)
 
@@ -123,6 +131,7 @@ def test_exhausting_retries_raises_unavailable_error():
 
 
 def test_raises_when_response_is_truncated_by_max_tokens():
+    """토큰 제한 걸리면 명확한 에러로 처리되는지"""
     adapter, _ = _adapter([_FakeMessage("Shot 1: incomplete...", stop_reason="max_tokens")])
 
     with pytest.raises(AIAdapterError, match="max_tokens"):

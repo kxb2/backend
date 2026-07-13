@@ -1,10 +1,14 @@
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import JobStatus, enum_values
 from app.db.base import Base
+
+if TYPE_CHECKING:
+    from app.storyboards.models import Storyboard
 
 _status_type = Enum(
     JobStatus, native_enum=False, length=20, validate_strings=True, values_callable=enum_values

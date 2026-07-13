@@ -2,6 +2,8 @@ from abc import ABC, abstractmethod
 
 from app.core.enums import Genre
 
+"""프롬프트/이미지 AI어댑터 추상 클래스(claude, gpt, gemini가 상속받아서 사용)"""
+
 
 class PromptAdapter(ABC):
     @abstractmethod

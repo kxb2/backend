@@ -1,4 +1,6 @@
-"""Claude API 호출 — 시나리오+장르+고급설정(+레퍼런스 이미지)로 9컷 통합 영문 프롬프트 생성."""
+"""Claude API 호출
+
+— 시나리오+장르+고급설정(+레퍼런스 이미지)로 9컷 통합 영문 프롬프트 생성."""
 
 import anthropic
 
@@ -10,9 +12,10 @@ from app.core.enums import Genre
 
 MAX_TOKENS = 1500
 
-# Anthropic 자체 서비스 문제(과부하/재시작 등)로, 재시도하면 성공할 수 있는 상태 코드.
+# Anthropic 자체 서비스 문제(과부하/재시작 등)로, 재시도하면 성공할 수 있는 상태 코드
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504, 529}
 
+# PRD 문서에서 뽑아낸 규칙들 영문으로 넣어놓음
 SYSTEM_PROMPT = """You are a cinematography prompt writer for an AI storyboard tool.
 
 Given a scenario and genre/style settings (and optionally reference images of characters,
@@ -49,6 +52,7 @@ def _build_user_content(
     era: str | None,
     reference_image_urls: list[str],
 ) -> list[anthropic.types.TextBlockParam | anthropic.types.ImageBlockParam]:
+    """Claude한테 보낼 사용자 메시지 내용"""
     settings_lines = [f"Genre: {genre}"]
     if style:
         settings_lines.append(f"Style: {style}")
@@ -70,6 +74,7 @@ def _build_user_content(
 
 
 def _map_error(exc: anthropic.AnthropicError) -> AIAdapterError:
+    """anthropic SDK가 던지는 에러를 exceptions.py 형식으로 바꾸기"""
     if isinstance(exc, anthropic.APITimeoutError):
         return AIAdapterTimeoutError(str(exc))
     if isinstance(exc, anthropic.APIConnectionError):
@@ -83,6 +88,7 @@ def _map_error(exc: anthropic.AnthropicError) -> AIAdapterError:
 
 class ClaudePromptAdapter(PromptAdapter):
     def __init__(self, client: anthropic.Anthropic | None = None, model: str | None = None) -> None:
+        """테스트 때문에 client나 model이 없는 경우를 넣어놓음"""
         if client is None or model is None:
             settings = get_settings()
             client = client or anthropic.Anthropic(api_key=settings.anthropic_api_key)
@@ -112,6 +118,7 @@ class ClaudePromptAdapter(PromptAdapter):
         )
 
         def _call() -> str:
+            """API 호출 시도"""
             try:
                 message = self._client.messages.create(
                     model=self._model,
@@ -129,5 +136,7 @@ class ClaudePromptAdapter(PromptAdapter):
                 )
 
             return "".join(block.text for block in message.content if block.type == "text")
+            # message.content 순회하면서 type이 text인 블록들의 텍스트만 이어붙여서 최종 문자열로 반환
 
         return call_with_retry(_call, label="claude_prompt_adapter")
+        # call_with_retry 함수는 API 부를때마다 쓰이지만 반복(재시도) 동작은 문제 생겼을때만
