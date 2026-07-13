@@ -2,12 +2,12 @@ from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
 from app.core import storage
+from app.core.constants import CUT_COUNT
 from app.core.enums import Genre, ImageModel, JobStatus
 from app.generations.models import Cut, Generation
 from app.storyboards.models import ReferenceImage, Storyboard
 
 MAX_REFERENCE_IMAGES = 10
-CUT_COUNT = 9
 
 
 class ReferenceImageLimitExceeded(Exception):

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import Genre, ImageModel, enum_values
 from app.db.base import Base
+from app.generations.models import Cut
 
 _image_model_type = Enum(
     ImageModel, native_enum=False, length=50, validate_strings=True, values_callable=enum_values
@@ -33,6 +34,9 @@ class Storyboard(Base):
 
     reference_images: Mapped[list["ReferenceImage"]] = relationship(
         back_populates="storyboard", cascade="all, delete-orphan"
+    )
+    cuts: Mapped[list["Cut"]] = relationship(
+        back_populates="storyboard", order_by="Cut.order_no", cascade="all, delete-orphan"
     )
 
 
