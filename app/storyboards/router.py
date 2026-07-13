@@ -1,10 +1,11 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from app.db.session import get_db
+from app.generations.service import run_generation
 from app.storyboards import service
 from app.storyboards.schemas import (
     Genre,
@@ -21,6 +22,7 @@ router = APIRouter(prefix="/storyboards", tags=["storyboards"])
 def create_storyboard(
     scenario_text: Annotated[str, Form(min_length=1)],
     genre: Annotated[Genre, Form()],
+    background_tasks: BackgroundTasks,
     style: Annotated[str | None, Form()] = None,
     tone: Annotated[str | None, Form()] = None,
     aspect_ratio: Annotated[str | None, Form()] = None,
@@ -57,6 +59,8 @@ def create_storyboard(
             status_code=400,
             detail=f"레퍼런스 이미지는 최대 {exc.limit}장까지 첨부할 수 있습니다.",
         ) from exc
+
+    background_tasks.add_task(run_generation, storyboard.id)
 
     return StoryboardCreateResponse(
         storyboard_id=storyboard.id,
