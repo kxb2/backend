@@ -152,7 +152,7 @@ class _FakePromptAdapter:
 
 class TestGenerateAndApplyPrompt:
     def test_succeeds_on_first_try(self):
-        """Claude가 처음부터 정상 포맷을 주면 재시도 없이 성공"""
+        """Claude가 처음부터 정상 포맷 주면 재시도 없이 성공"""
         storyboard = _storyboard_with_cuts()
         adapter = _FakePromptAdapter([_integrated_prompt()])
 
@@ -176,7 +176,7 @@ class TestGenerateAndApplyPrompt:
         assert adapter.calls == 2
 
     def test_retries_after_adapter_error_too(self):
-        """Claude 호출 자체가(재시도 다 쓰고) 실패해도 오케스트레이션 레벨에서 한 번 더 시도"""
+        """Claude 호출 자체가(재시도 다 쓰고) 실패해도 service.py에서 한 번 더 시도"""
         storyboard = _storyboard_with_cuts()
         adapter = _FakePromptAdapter([AIAdapterError("claude down"), _integrated_prompt()])
 
@@ -207,6 +207,7 @@ def _cuts_with_prompts(count: int = 9) -> list[Cut]:
 
 class TestGenerateCutImages:
     def test_all_succeed_maps_cut_id_to_url(self):
+        """9개 컷 성공하면 각 cut.id에 맞는 이미지 URL이 정확히 매핑되고, aspect_ratio가 모든 호출에 전달되는지"""
         cuts = _cuts_with_prompts()
         responses = {f"prompt-{n}": f"https://pub-x.r2.dev/cuts/{n}.png" for n in range(1, 10)}
         adapter = _FakeImageAdapter(responses)
@@ -218,7 +219,7 @@ class TestGenerateCutImages:
         assert all(call[1] == "16:9" for call in adapter.calls)
 
     def test_failed_cuts_map_to_none_without_affecting_others(self):
-        """일부 컷만 실패해도(AIAdapterError) 나머지 컷은 정상적으로 URL을 반환"""
+        """일부 컷만 실패해도(AIAdapterError) 나머지 컷은 정상적으로 URL 반환"""
         cuts = _cuts_with_prompts()
         responses = {f"prompt-{n}": f"https://pub-x.r2.dev/cuts/{n}.png" for n in range(1, 10)}
         responses["prompt-5"] = AIAdapterError("image gen failed")
@@ -231,7 +232,7 @@ class TestGenerateCutImages:
         assert results[9] == "https://pub-x.r2.dev/cuts/9.png"
 
     def test_non_ai_adapter_error_also_fails_only_that_cut(self):
-        """R2 업로드 실패처럼 AIAdapterError가 아닌 예외도, 그 컷만 실패 처리되고 나머지·전체 흐름은 안 죽는지"""
+        """R2 업로드 실패처럼 AIAdapterError가 아닌 예외도, 그 컷만 실패 처리되고 나머지·전체 흐름은 안 죽나"""
         cuts = _cuts_with_prompts()
         responses = {f"prompt-{n}": f"https://pub-x.r2.dev/cuts/{n}.png" for n in range(1, 10)}
         responses["prompt-5"] = RuntimeError("R2 upload failed")
@@ -253,7 +254,7 @@ def _solid_png_bytes(color: tuple[int, int, int], size: tuple[int, int] = (2, 2)
 
 class TestBuildGridImage:
     def test_composes_nine_tiles_into_3x3_grid_in_order(self, monkeypatch):
-        """9개 타일을 순서대로(1번=좌상단...9번=우하단) 3x3으로 정확히 배치하는지"""
+        """9개 타일을 순서대로 3x3으로 정확히 배치하는지"""
         colors = [(i * 25, 0, 0) for i in range(9)]
         urls = [f"https://pub-x.r2.dev/cuts/{i}.png" for i in range(9)]
         tile_bytes_by_url = {url: _solid_png_bytes(colors[i]) for i, url in enumerate(urls)}
