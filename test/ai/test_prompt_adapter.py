@@ -2,7 +2,7 @@ import anthropic
 import httpx
 import pytest
 
-from app.ai.exceptions import AIAdapterRequestError, AIAdapterUnavailableError
+from app.ai.exceptions import AIAdapterError, AIAdapterRequestError, AIAdapterUnavailableError
 from app.ai.prompt_adapter import ClaudePromptAdapter
 from app.core.enums import Genre
 
@@ -14,8 +14,9 @@ class _FakeTextBlock:
 
 
 class _FakeMessage:
-    def __init__(self, text):
+    def __init__(self, text, stop_reason="end_turn"):
         self.content = [_FakeTextBlock(text)]
+        self.stop_reason = stop_reason
 
 
 class _FakeMessages:
@@ -119,3 +120,10 @@ def test_exhausting_retries_raises_unavailable_error():
         adapter.generate_prompt(scenario_text="s", genre=Genre.ACTION)
 
     assert len(client.messages.calls) == 3
+
+
+def test_raises_when_response_is_truncated_by_max_tokens():
+    adapter, _ = _adapter([_FakeMessage("Shot 1: incomplete...", stop_reason="max_tokens")])
+
+    with pytest.raises(AIAdapterError, match="max_tokens"):
+        adapter.generate_prompt(scenario_text="s", genre=Genre.DRAMA)

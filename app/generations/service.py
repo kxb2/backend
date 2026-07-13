@@ -58,9 +58,10 @@ def apply_integrated_prompt(db: Session, storyboard: Storyboard, integrated_prom
     validate_prompt_length(integrated_prompt)
     shots = split_shots(integrated_prompt)
 
-    if len(storyboard.cuts) != CUT_COUNT:
+    order_nos = {cut.order_no for cut in storyboard.cuts}
+    if order_nos != set(range(1, CUT_COUNT + 1)):
         raise PromptValidationError(
-            f"스토리보드에 컷이 {CUT_COUNT}개가 아닙니다 (실제 {len(storyboard.cuts)}개)"
+            f"스토리보드의 컷 순번이 1~{CUT_COUNT}와 일치하지 않습니다 (실제: {sorted(order_nos)})"
         )
 
     storyboard.integrated_prompt = integrated_prompt

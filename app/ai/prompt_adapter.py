@@ -48,7 +48,7 @@ def _build_user_content(
     aspect_ratio: str | None,
     era: str | None,
     reference_image_urls: list[str],
-) -> list[dict]:
+) -> list[anthropic.types.TextBlockParam | anthropic.types.ImageBlockParam]:
     settings_lines = [f"Genre: {genre}"]
     if style:
         settings_lines.append(f"Style: {style}")
@@ -61,7 +61,9 @@ def _build_user_content(
 
     text = f"Scenario:\n{scenario_text}\n\nSettings:\n" + "\n".join(settings_lines)
 
-    content: list[dict] = [{"type": "text", "text": text}]
+    content: list[anthropic.types.TextBlockParam | anthropic.types.ImageBlockParam] = [
+        {"type": "text", "text": text}
+    ]
     for url in reference_image_urls:
         content.append({"type": "image", "source": {"type": "url", "url": url}})
     return content
@@ -119,6 +121,12 @@ class ClaudePromptAdapter(PromptAdapter):
                 )
             except anthropic.AnthropicError as exc:
                 raise _map_error(exc) from exc
+
+            if message.stop_reason == "max_tokens":
+                raise AIAdapterError(
+                    f"Claude 응답이 max_tokens({MAX_TOKENS})에서 잘렸습니다 — "
+                    "프롬프트 길이 또는 MAX_TOKENS 조정이 필요합니다."
+                )
 
             return "".join(block.text for block in message.content if block.type == "text")
 
