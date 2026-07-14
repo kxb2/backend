@@ -21,7 +21,7 @@ from app.core import storage
 from app.core.constants import CUT_COUNT
 from app.core.enums import JobStatus
 from app.db.session import SessionLocal
-from app.generations.models import Cut
+from app.generations.models import Cut, Generation
 from app.storyboards.models import Storyboard
 
 logger = logging.getLogger(__name__)
@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 MAX_INTEGRATED_PROMPT_LENGTH = 3000
 MAX_PROMPT_ATTEMPTS = 2
 GRID_IMAGE_FOLDER = "grids"
+
+
+def get_generation(db: Session, generation_id: int) -> Generation | None:
+    """9컷 생성 상태/결과 조회"""
+    return db.get(Generation, generation_id)
 
 # Claude 출력의 "Shot 1: ...", "Shot 2: ..." 라벨을 순번과 함께 찾기
 _SHOT_PATTERN = re.compile(r"Shot\s*(\d+)\s*:\s*", re.IGNORECASE)
