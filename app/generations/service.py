@@ -117,23 +117,32 @@ def _generate_and_apply_prompt(db: Session, storyboard: Storyboard, prompt_adapt
 
 
 def _generate_one_cut_image(
-    image_adapter: ImageAdapter, cut: Cut, aspect_ratio: str | None
+    image_adapter: ImageAdapter, cut_id: int, order_no: int, prompt_text: str, aspect_ratio: str | None
 ) -> tuple[int, str | None]:
-    """스레드에서 실행, DB 접근 X - (cut.id, 이미지 URL) 또는 실패 시 (cut.id, None) 반환."""
+    """스레드에서 실행, DB/ORM 접근 X(순수 값만 받음) - (cut_id, 이미지 URL) 또는 실패 시 (cut_id, None) 반환."""
     try:
-        url = image_adapter.generate_image(prompt_text=cut.prompt_text, aspect_ratio=aspect_ratio)
-        return cut.id, url
+        url = image_adapter.generate_image(prompt_text=prompt_text, aspect_ratio=aspect_ratio)
+        return cut_id, url
     except Exception as exc:  # noqa: BLE001 — R2 업로드 실패 등 AIAdapterError 밖의 에러도 이 컷만 실패 처리
-        logger.error("컷 %d(id=%d) 이미지 생성 실패: %s", cut.order_no, cut.id, exc)
-        return cut.id, None
+        logger.error("컷 %d(id=%d) 이미지 생성 실패: %s", order_no, cut_id, exc)
+        return cut_id, None
 
 
 def _generate_cut_images(
     image_adapter: ImageAdapter, cuts: list[Cut], aspect_ratio: str | None
 ) -> dict[int, str | None]:
-    """위의 _generate_one_cut_image 함수를 9개 컷에 대해 스레드풀로 동시 실행"""
-    with ThreadPoolExecutor(max_workers=len(cuts)) as executor:
-        futures = [executor.submit(_generate_one_cut_image, image_adapter, cut, aspect_ratio) for cut in cuts]
+    """위의 _generate_one_cut_image 함수를 9개 컷에 대해 스레드풀로 동시 실행.
+
+    ㅡ cut의 필요한 값들은 스레드 넘기기 전에 메인 스레드에서 미리 뽑아둠
+    ㅡ Session은 스레드 세이프하지 않아서, 살아있는 ORM 객체를 그대로 넘기면 X
+    """
+    cut_inputs = [(cut.id, cut.order_no, cut.prompt_text) for cut in cuts]
+
+    with ThreadPoolExecutor(max_workers=len(cut_inputs)) as executor:
+        futures = [
+            executor.submit(_generate_one_cut_image, image_adapter, cut_id, order_no, prompt_text, aspect_ratio)
+            for cut_id, order_no, prompt_text in cut_inputs
+        ]
         wait(futures)
 
     return dict(future.result() for future in futures)
@@ -158,6 +167,24 @@ def _build_grid_image(cut_image_urls: list[str]) -> bytes:
 def get_generation(db: Session, generation_id: int) -> Generation | None:
     """9컷 생성 상태/결과 조회(GET 라우터가 사용)"""
     return db.get(Generation, generation_id)
+
+
+def recover_stuck_generations(db: Session) -> int:
+    """서버 시작 시(배포로 인한 컨테이너 재시작 등) 호출
+    
+    — pending/processing으로 멈춰있던 generation/cut을 failed로 정리.
+    ㅡ run_generation은 BackgroundTasks로 도는 별도 스레드라서 필요
+    """
+    stuck_generations = (
+        db.query(Generation).filter(Generation.status.in_([JobStatus.PENDING, JobStatus.PROCESSING])).all()
+    )
+    for generation in stuck_generations:
+        generation.status = JobStatus.FAILED
+        for cut in generation.storyboard.cuts:
+            if cut.status != JobStatus.COMPLETED:
+                cut.status = JobStatus.FAILED
+    db.commit()
+    return len(stuck_generations)
 
 
 # ======= 3. 본격적인 9컷 생성 과정
