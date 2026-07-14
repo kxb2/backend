@@ -1,12 +1,22 @@
-FROM python:3.13-slim
+FROM eclipse-temurin:17-jdk AS builder
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY gradlew .
+COPY gradle gradle
+COPY build.gradle .
+COPY settings.gradle .
+COPY src src
 
-COPY app app
+RUN chmod +x gradlew
+RUN ./gradlew clean bootJar -x test
+
+FROM eclipse-temurin:17-jre
+
+WORKDIR /app
+
+COPY --from=builder /app/build/libs/*.jar app.jar
 
 EXPOSE 8080
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+ENTRYPOINT ["java", "-jar", "app.jar"]
