@@ -36,8 +36,6 @@ IMAGE_FOLDER = "cuts"
 #   "auto" 쓰면 9컷이 각자 지맘대로 골라서 그리드 보니까 몇개 찌그러짐
 #
 # [Gemini: gemini-3.1-flash-image]
-# - "gemini-3.5-flash-image"는 실제로 존재하지 않는 모델명이었음(ListModels로 확인, 404) —
-#   실제 API에 있는 모델 중 제일 가까운 gemini-3.1-flash-image(프리뷰 아닌 정식 버전)로 교체함.
 # - `ImageConfig.aspect_ratio`는 GPT처럼 픽셀 사이즈 근사가 필요 없이 비율 문자열을 그대로 받음.
 #   설치된 SDK(google-genai==2.11.0) 타입 정의 기준 지원값 8개:
 #   "1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9", "21:9"
