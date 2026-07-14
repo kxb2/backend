@@ -27,7 +27,9 @@ from app.storyboards.models import Storyboard
 logger = logging.getLogger(__name__)
 
 MAX_INTEGRATED_PROMPT_LENGTH = 3000
-MAX_PROMPT_ATTEMPTS = 2
+MAX_PROMPT_ATTEMPTS = 3
+# 원래 2번이었는데 생각보다 프롬프트 제한수 잘 걸려서 3회로 늘림
+# (3000자 제한 계속 문제되면 3000자 한도 더 늘려야되나 생각중)
 GRID_IMAGE_FOLDER = "grids"
 
 
@@ -98,6 +100,7 @@ def apply_integrated_prompt(db: Session, storyboard: Storyboard, integrated_prom
 def _generate_and_apply_prompt(db: Session, storyboard: Storyboard, prompt_adapter: PromptAdapter) -> bool:
     """Claude 호출 + 분리/검증. 형식이 이상하면 MAX_PROMPT_ATTEMPTS까지 새로 생성해서 재시도, 최종 실패 시 False."""
     for attempt in range(1, MAX_PROMPT_ATTEMPTS + 1):
+        integrated_prompt: str | None = None  # 매 시도마다 리셋(이전 시도 값 남아있으면 로그 헷갈려서)
         try:
             integrated_prompt = prompt_adapter.generate_prompt(
                 scenario_text=storyboard.scenario_text,
@@ -112,6 +115,12 @@ def _generate_and_apply_prompt(db: Session, storyboard: Storyboard, prompt_adapt
             return True
         except (AIAdapterError, PromptValidationError) as exc:
             logger.warning("통합 프롬프트 생성/검증 실패(시도 %d/%d): %s", attempt, MAX_PROMPT_ATTEMPTS, exc)
+            # generate_prompt까지는 성공하고 apply_integrated_prompt(검증)에서만 실패한 경우에만 원문 존재.
+            # 이 원문을 봐야 어느 요소(Camera/Setting 등)가 길어서 넘겼는지 다음 프롬프트 튜닝에 참고 가능.
+            if integrated_prompt is not None:
+                logger.warning(
+                    "실패한 통합 프롬프트 원문(시도 %d/%d):\n%s", attempt, MAX_PROMPT_ATTEMPTS, integrated_prompt
+                )
 
     return False
 

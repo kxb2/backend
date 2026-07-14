@@ -168,12 +168,12 @@ class TestGenerateAndApplyPrompt:
         assert adapter.calls == 2
 
     def test_returns_false_after_max_attempts_all_malformed(self):
-        """MAX_PROMPT_ATTEMPTS(2)번 다 형식 오류면 False 반환"""
+        """MAX_PROMPT_ATTEMPTS(3)번 다 형식 오류면 False 반환"""
         storyboard = _storyboard_with_cuts()
-        adapter = _FakePromptAdapter(["malformed 1", "malformed 2"])
+        adapter = _FakePromptAdapter(["malformed 1", "malformed 2", "malformed 3"])
 
         assert _generate_and_apply_prompt(Mock(), storyboard, adapter) is False
-        assert adapter.calls == 2
+        assert adapter.calls == 3
 
     def test_retries_after_adapter_error_too(self):
         """Claude 호출 자체가(재시도 다 쓰고) 실패해도 service.py에서 한 번 더 시도"""
