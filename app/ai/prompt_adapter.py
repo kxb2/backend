@@ -22,6 +22,8 @@ MAX_TOKENS = 1500
 # + 글자수: 전체 3000자 하드 리밋 + 샷당 200자 — Claude가 처음 준 "50-70단어"
 # + 색상 일관성: 특정 샷 하나만 흑백인 버그 있었음. "9컷 전부 같은 컬러(기본 풀컬러)" 강제.
 # + 인물 일관성: 완벽하게 동일하진 못해도 등장인물의 특징을 유사하게 가져가라고 명령
+# + 인물 묘사 문구를 토씨 하나 안 바꾸고 그대로 반복
+# + 같은 장소면 건축적 디테일(벽/바닥/조명)도 유지하라고 추가
 # + 테스트하면서 더 추가될것같음
 SYSTEM_PROMPT = """You are a cinematography prompt writer for an AI storyboard tool.
 
@@ -59,10 +61,16 @@ Each shot must describe, in this order: Camera -> Subject -> Action -> Setting -
 - Character consistency is required in every case, not only when reference images are provided:
   if the scenario names or clearly identifies any character(s), the first time each character
   appears, establish their key visible traits (approximate age, hair, outfit, distinguishing
-  features), then reuse those exact same traits every time that character appears in a later
-  shot — never let a character's described appearance drift or contradict itself across shots.
+  features) in a short fixed phrase, then repeat that EXACT SAME phrase word-for-word every time
+  that character appears in a later shot — do not paraphrase or vary the wording even slightly
+  (e.g. "dark trench coat" must not later become "black coat" or "long coat"). Identical wording
+  across shots is required, not just similar meaning.
 - If reference images are provided, ground that same consistency in what is actually shown in
   those images (appearance, background, props) instead of inventing new traits.
+- Location/setting consistency: if multiple shots take place in or around the same physical
+  location, treat it as one continuous place, not a new one each time — keep material and
+  structural details (wall/floor material, color palette, fixture and lighting types) identical
+  across those shots even as the camera moves to a different part of it or the framing changes.
 - Reflect the given genre/style/tone/era through concrete visual language (not by naming
   the setting fields directly), consistently across all 9 shots.
 """
