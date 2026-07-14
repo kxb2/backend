@@ -148,14 +148,29 @@ def _generate_cut_images(
     return dict(future.result() for future in futures)
 
 
+def _download_image(url: str) -> Image.Image:
+    """스레드에서 실행, DB/ORM 접근 X(단순 HTTP 다운로드) - URL 하나를 내려받아 PIL Image로 반환."""
+    return Image.open(BytesIO(httpx.get(url, timeout=30.0).content))
+
+
 def _build_grid_image(cut_image_urls: list[str]) -> bytes:
-    """order_no 순서로 정렬된 9개 이미지 URL을 내려받아 3x3 그리드 1장(PNG)으로 합성."""
-    images = [Image.open(BytesIO(httpx.get(url, timeout=30.0).content)) for url in cut_image_urls]
+    """order_no 순서로 정렬된 9개 이미지 URL을 병렬로 내려받아 3x3 그리드 1장(PNG)으로 합성.
+
+    ㅡ executor.map은 입력 순서를 그대로 보존해서 반환하므로 order_no 순서가 깨지지 않음.
+    """
+    with ThreadPoolExecutor(max_workers=len(cut_image_urls)) as executor:
+        images = list(executor.map(_download_image, cut_image_urls))
+
     tile_size = images[0].size
-    images = [image if image.size == tile_size else image.resize(tile_size) for image in images]
+    resized_images = []
+    for image in images:
+        if image.size != tile_size:
+            logger.warning("그리드 타일 크기가 달라 리사이즈합니다: %s -> %s", image.size, tile_size)
+            image = image.resize(tile_size)
+        resized_images.append(image)
 
     grid = Image.new("RGB", (tile_size[0] * 3, tile_size[1] * 3))
-    for index, image in enumerate(images):
+    for index, image in enumerate(resized_images):
         row, col = divmod(index, 3)
         grid.paste(image, (col * tile_size[0], row * tile_size[1]))
 

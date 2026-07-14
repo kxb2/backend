@@ -1,6 +1,7 @@
 """GPT image / Gemini image API 호출 — 컷별 프롬프트 텍스트로 이미지 1장 생성해서 R2에 업로드."""
 
 import base64
+import logging
 
 import openai
 from google import genai
@@ -21,9 +22,15 @@ from app.core import storage
 from app.core.config import get_settings
 from app.core.enums import ImageModel
 
+logger = logging.getLogger(__name__)
+
 IMAGE_FOLDER = "cuts"
 
 # gpt-image-1이 실제로 지원하는 크기(정사각형/가로/세로)만 사용.
+# 즉 "16:9", "4:3"처럼 임의의 화면비를 요청해도 실제로는 이 3개 프리셋 중 하나로 근사됨
+# (예: "16:9" -> 1536x1024 = 실제로는 3:2). 다운스트림 영상 AI와 정확한 화면비를 맞춰야 한다면
+# gpt-image-1을 선택했을 때 프론트 화면비 옵션 자체를 이 3개로 제한하는 것도 고려.
+# gemini가 지원하는 비율은 아직 확인 필요
 _GPT_LANDSCAPE_SIZE = "1536x1024"
 _GPT_PORTRAIT_SIZE = "1024x1536"
 _GPT_SQUARE_SIZE = "1024x1024"
@@ -39,10 +46,14 @@ def _gpt_size_for_aspect_ratio(aspect_ratio: str | None) -> str:
         return "auto"
 
     if width > height:
-        return _GPT_LANDSCAPE_SIZE
-    if width < height:
-        return _GPT_PORTRAIT_SIZE
-    return _GPT_SQUARE_SIZE
+        size = _GPT_LANDSCAPE_SIZE
+    elif width < height:
+        size = _GPT_PORTRAIT_SIZE
+    else:
+        size = _GPT_SQUARE_SIZE
+
+    logger.info("requested %s, approximated to %s", aspect_ratio, size)
+    return size
 
 
 def _map_openai_error(exc: openai.OpenAIError) -> AIAdapterError:
