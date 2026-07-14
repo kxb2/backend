@@ -45,13 +45,13 @@ class TestGptSizeForAspectRatio:
         """1:1이면 "1024x1024" """
         assert _gpt_size_for_aspect_ratio("1:1") == "1024x1024"
 
-    def test_none_defaults_to_auto(self):
-        """화면비가 없으면 "auto" """
-        assert _gpt_size_for_aspect_ratio(None) == "auto"
+    def test_none_defaults_to_landscape(self):
+        """화면비가 없으면 "auto" 대신 고정 가로형 — 그리드 타일 크기 일관성 위해"""
+        assert _gpt_size_for_aspect_ratio(None) == "1536x1024"
 
-    def test_unparseable_defaults_to_auto(self):
-        """이상한 형식 문자열이면 "auto" """
-        assert _gpt_size_for_aspect_ratio("bogus") == "auto"
+    def test_unparseable_defaults_to_landscape(self):
+        """이상한 형식 문자열이면 고정 가로형"""
+        assert _gpt_size_for_aspect_ratio("bogus") == "1536x1024"
 
 
 class _FakeOpenAIImage:
@@ -186,7 +186,7 @@ class _FakeGeminiClient:
 
 def _gemini_adapter(responses):
     client = _FakeGeminiClient(responses)
-    return GeminiImageAdapter(client=client, model="gemini-3.5-flash-image"), client
+    return GeminiImageAdapter(client=client, model="gemini-3.1-flash-image"), client
 
 
 def _gemini_status_error(status_code):
@@ -204,6 +204,16 @@ class TestGeminiImageAdapter:
         assert url == "https://pub-x.r2.dev/cuts/fake.png"
         assert _fake_r2_upload[0] == (b"image-bytes", "image/png", "cuts")
         assert client.models.calls[0]["config"].image_config == genai_types.ImageConfig(aspect_ratio="16:9")
+
+    def test_none_aspect_ratio_defaults_to_3_2(self, _fake_r2_upload):
+        """aspect_ratio 없으면 ImageConfig 자체를 생략(None)하지 않고 3:2 기본값을 명시하는지 —
+        9컷이 독립 호출이라 명시 안 하면 컷마다 제멋대로 비율이 나올 수 있음"""
+        response = _FakeGeminiResponse([_FakePart(_FakeBlob(b"image-bytes"))])
+        adapter, client = _gemini_adapter([response])
+
+        adapter.generate_image(prompt_text="a cat")
+
+        assert client.models.calls[0]["config"].image_config == genai_types.ImageConfig(aspect_ratio="3:2")
 
     def test_skips_non_image_parts(self, _fake_r2_upload):
         """이미지가 없는 part는 건너뛰고 실제 이미지가 있는 part를 쓰는지"""
@@ -254,7 +264,7 @@ class _FakeSettings:
     openai_api_key = "test-openai-key"
     openai_image_model = "gpt-image-1"
     gemini_api_key = "test-gemini-key"
-    gemini_image_model = "gemini-3.5-flash-image"
+    gemini_image_model = "gemini-3.1-flash-image"
 
 
 class TestGetImageAdapter:

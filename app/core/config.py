@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     openai_image_model: str = "gpt-image-1"
 
     gemini_api_key: str
-    gemini_image_model: str = "gemini-3.5-flash-image"
+    gemini_image_model: str = "gemini-3.1-flash-image"
 
     @property
     def cors_allowed_origins_list(self) -> list[str]:

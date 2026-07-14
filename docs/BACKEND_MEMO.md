@@ -3,7 +3,7 @@
 - 프론트 배포는 Vercel, 백엔드 배포는 AWS EC2
 - 배포: AWS EC2 (t3.small, 서울 ap-northeast-2, Ubuntu 24.04 LTS, 30GB) — 전 개발자 Dockerfile/docker-compose/GitHub Actions(`deploy.yml`) 재사용, Dockerfile만 Python(FastAPI)용으로 교체
 - 프롬프트 생성: Claude API (PRD 기술스택 확정 사항)
-- 이미지 생성: GPT image(기본값) / Gemini 3.5 Flash Image, 어댑터 패턴으로 호출
+- 이미지 생성: GPT image(기본값) / Gemini 3.1 Flash Image, 어댑터 패턴으로 호출
 - 유저/ 로그인 최종 확정 정책: 사내 이메일(도메인) 제한 없음, 일반 이메일 회원가입/로그인 및 구글 소셜 로그인(OAuth) 동시 지원. 일반 이메일 가입은 가입 링크만 있으면 누구나 가입 가능한 구조로 진행. 최초 검토했던 폐쇄형 화이트리스트 방식에서 '일반 유저 가입이 가능한 오픈형 방식'으로 기획 방향이 변경.
 - DB: Supabase(Postgres) — 관계형 구조(스토리보드-컷-캔버스-Export) 적합
 - ORM: SQLAlchemy
@@ -15,6 +15,7 @@
 - 마이그레이션: Alembic 예정 (models.py DB 스키마 안정화된후 세팅) -> 연결후엔 db 밀때 alembic 관련도 포함시켜야함, 프론트랑 연결되기 전에 alembic 설정과 db 설계 끝내야함
 - EC2 지원받으면: docker-compose.prod.yml에 nginx나 HTTPS설정 / vercel은 기본적으로 https 서빙, ec2 앞에 도메인 + HTTPS(nginx reverse proxy + Let's Encrypt 등)를 붙여야 할 수도
 - 로컬 개발 DB와 배포 DB는 **분리 안 하고 하나만 사용하기로 결정**  `PROD_DATABASE_URL` secret은 로컬 `.env`의 `DATABASE_URL`과 **동일한 값**으로 등록하면 됨(`docker-compose.prod.yml`이 이미 그 이름을 참조하고 있어서 코드 수정 불필요). 대신 **실제 배포(`develop→main`) 직전에 테스트용 row 정리**하는 걸 체크리스트에 넣기 (storyboards 삭제 시 reference_images/generations/cuts는 cascade로 같이 지워짐) → 의견 물어보거나 더 나은 방향 있으면 배포 DB 따로 할수도 있고, 환경에 따라 자동화나... 다른 방향 생각해보는중.
+- PRD 7번 장르별 기본 앵글 설정 아직은 필요없는데 추후 넣어야되면: Claude 프롬프트 및 로직 다시 짜야함
 
 
 ## Git 브랜치 워크플로우

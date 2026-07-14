@@ -1,6 +1,7 @@
 """GPT image / Gemini image API 호출 — 컷별 프롬프트 텍스트로 이미지 1장 생성해서 R2에 업로드."""
 
 import base64
+import logging
 
 import openai
 from google import genai
@@ -21,28 +22,54 @@ from app.core import storage
 from app.core.config import get_settings
 from app.core.enums import ImageModel
 
+logger = logging.getLogger(__name__)
+
 IMAGE_FOLDER = "cuts"
 
-# gpt-image-1이 실제로 지원하는 크기(정사각형/가로/세로)만 사용.
+# ===== 화면비(aspect_ratio) 처리 정리 =====
+# [GPT: gpt-image-1]
+# - `size` 파라미터가 픽셀 사이즈 3개(+"auto")만 받는 OpenAI API 자체 제약:
+#   가로 1536x1024(=3:2) / 세로 1024x1536(=2:3) / 정사각형 1024x1024(=1:1)
+# - 그래서 "16:9", "4:3"처럼 임의의 화면비를 요청해도 실제로는 이 3개 중 하나로 근사됨
+#   A조의 영상 AI와 정확한 화면비를 맞춰야 한다면 화면비 옵션 자체를 이 3개로 제한해야 하나?
+# - 일단 aspect_ratio가 없거나 못 읽으면 1536x1024(=3:2) 기본값 고정.
+#   "auto" 쓰면 9컷이 각자 지맘대로 골라서 그리드 보니까 몇개 찌그러짐
+#
+# [Gemini: gemini-3.1-flash-image]
+# - `ImageConfig.aspect_ratio`는 GPT처럼 픽셀 사이즈 근사가 필요 없이 비율 문자열을 그대로 받음.
+#   설치된 SDK(google-genai==2.11.0) 타입 정의 기준 지원값 8개:
+#   "1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9", "21:9"
+# - 일단 aspect_ratio가 없으면 GPT 기본값과 동일한 3:2로 기본값 고정.
+
 _GPT_LANDSCAPE_SIZE = "1536x1024"
 _GPT_PORTRAIT_SIZE = "1024x1536"
 _GPT_SQUARE_SIZE = "1024x1024"
 
+_GEMINI_DEFAULT_ASPECT_RATIO = "3:2"
+
 
 def _gpt_size_for_aspect_ratio(aspect_ratio: str | None) -> str:
-    """"16:9" 같은 화면비 문자열을 gpt-image-1이 받는 size 문자열로 변환. 못 읽으면 "auto"."""
-    if not aspect_ratio or ":" not in aspect_ratio:
-        return "auto"
-    try:
-        width, height = (float(part) for part in aspect_ratio.split(":", 1))
-    except ValueError:
-        return "auto"
+    """"16:9" 같은 화면비 문자열 → gpt-image-1이 받는 size 문자열로 변환.
 
-    if width > height:
-        return _GPT_LANDSCAPE_SIZE
-    if width < height:
-        return _GPT_PORTRAIT_SIZE
-    return _GPT_SQUARE_SIZE
+    ㅡ 화면비가 없거나 못 읽으면 "auto" 대신 기본값(가로형 1536x1024)을 씀
+    """
+    size = _GPT_LANDSCAPE_SIZE
+    if aspect_ratio and ":" in aspect_ratio:
+        try:
+            width, height = (float(part) for part in aspect_ratio.split(":", 1))
+        except ValueError:
+            width = height = None
+
+        if width is not None:
+            if width > height:
+                size = _GPT_LANDSCAPE_SIZE
+            elif width < height:
+                size = _GPT_PORTRAIT_SIZE
+            else:
+                size = _GPT_SQUARE_SIZE
+
+    logger.info("requested %s, using %s", aspect_ratio, size)
+    return size
 
 
 def _map_openai_error(exc: openai.OpenAIError) -> AIAdapterError:
@@ -111,7 +138,10 @@ class GeminiImageAdapter(ImageAdapter):
         self._model = model
 
     def generate_image(self, *, prompt_text: str, aspect_ratio: str | None = None) -> str:
-        image_config = genai_types.ImageConfig(aspect_ratio=aspect_ratio) if aspect_ratio else None
+        # aspect_ratio 없으면 기본값 지정(GPT 기본값과 동일한 3:2)
+        resolved_aspect_ratio = aspect_ratio or _GEMINI_DEFAULT_ASPECT_RATIO
+        logger.info("requested %s, using %s", aspect_ratio, resolved_aspect_ratio)
+        image_config = genai_types.ImageConfig(aspect_ratio=resolved_aspect_ratio)
         config = genai_types.GenerateContentConfig(
             response_modalities=["IMAGE"],
             image_config=image_config,

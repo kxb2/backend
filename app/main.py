@@ -6,7 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.db.base import Base
-from app.db.session import engine
+from app.db.session import SessionLocal, engine
+from app.generations.router import router as generations_router
+from app.generations.service import recover_stuck_generations
 from app.routers import health
 from app.storyboards.router import router as storyboards_router
 
@@ -19,8 +21,16 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     try:
         Base.metadata.create_all(bind=engine)
+
+        db = SessionLocal()
+        try:
+            recovered = recover_stuck_generations(db)
+            if recovered:
+                logger.warning("서버 재시작으로 중단된 생성 job %d개를 failed 처리했습니다.", recovered)
+        finally:
+            db.close()
     except Exception:
-        logger.warning("DB 연결 실패로 테이블 생성을 건너뜁니다 (Supabase 일시정지 여부 확인 필요)", exc_info=True)
+        logger.warning("DB 연결 실패로 시작 작업을 건너뜁니다 (Supabase 일시정지 여부 확인 필요)", exc_info=True)
     yield
 
 
@@ -36,3 +46,4 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(storyboards_router)
+app.include_router(generations_router)
