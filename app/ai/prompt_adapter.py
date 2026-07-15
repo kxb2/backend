@@ -16,15 +16,17 @@ from app.ai.retry import call_with_retry
 from app.core.config import get_settings
 from app.core.enums import Genre
 
-MAX_TOKENS = 1500
+# 테스트에서 응답이 중간에 잘려서(stop_reason=max_tokens) 재시도 낭비된 사례 있어서 상향
+MAX_TOKENS = 2500
 
 # 기본적으로 PRD 문서에서 뽑아낸 규칙들 영문으로 넣어놓음
-# + 글자수: 전체 3000자 하드 리밋 + 샷당 200자 — Claude가 처음 준 "50-70단어"
-# + 색상 일관성: 특정 샷 하나만 흑백인 버그 있었음. "9컷 전부 같은 컬러(기본 풀컬러)" 강제.
-# + 인물 일관성: 완벽하게 동일하진 못해도 등장인물의 특징을 유사하게 가져가라고 명령
-# + 인물 묘사 문구를 토씨 하나 안 바꾸고 그대로 반복
+# + 글자수: 전체 3000자 하드 리밋 + 샷당 270자
+# + 색상 일관성: 특정 샷만 흑백인 버그 있었음. "9컷 전부 같은 컬러(기본 풀컬러)" 강제.
+# + 인물 일관성: 동일하진 못해도 등장인물의 간단한 특징을 고정문구로 지정
+# + 인물 묘사를 반복해야 하는 이유도 추가(9컷이 서로 보지 못한다)
 # + 같은 장소면 건축적 디테일(벽/바닥/조명)도 유지하라고 추가
 # + 테스트하면서 더 추가될것같음
+
 SYSTEM_PROMPT = """You are a cinematography prompt writer for an AI storyboard tool.
 
 Given a scenario and genre/style settings (and optionally reference images of characters,
@@ -46,8 +48,9 @@ Each shot must describe, in this order: Camera -> Subject -> Action -> Setting -
 - Action: exactly one present-tense verb, one single action.
 - Do not use abstract mood words (e.g. "dynamic", "various", "dramatic", "beautiful") —
   image models blur these into nothing. Describe concrete, visible details instead.
-- HARD PER-SHOT CEILING: each shot must be under 200 characters (roughly 25-30 words). Do the
-  math as you write: 9 shots x 200 characters = 1800, leaving real margin under the 3000-character
+- HARD PER-SHOT CEILING: each shot must be under 270 characters (roughly 35-40 words) — this
+  already accounts for a repeated character trait phrase taking up part of that budget. Do the
+  math as you write: 9 shots x 270 characters = 2430, leaving real margin under the 3000-character
   hard limit above — that margin is a safety buffer, not room to write longer shots. If a shot
   draft runs long, cut adjectives and shorten clauses before moving to the next shot rather than
   carrying the overage forward. A shot that reads terse and plain is correct; a shot that reads
@@ -65,6 +68,13 @@ Each shot must describe, in this order: Camera -> Subject -> Action -> Setting -
   that character appears in a later shot — do not paraphrase or vary the wording even slightly
   (e.g. "dark trench coat" must not later become "black coat" or "long coat"). Identical wording
   across shots is required, not just similar meaning.
+  CRITICAL REASON for this rule: each shot's text is sent to an image generator IN ISOLATION —
+  whichever shot generates later never sees any earlier shot. A shot that only names a character
+  (e.g. "the detective runs inside") without repeating their trait phrase gives the image
+  generator zero information about what that character looks like, so it will render a
+  random-looking person. Naming a character is NEVER a substitute for repeating their trait
+  phrase — every shot that character appears in, however minor their role in that shot, must
+  still carry the full phrase.
 - If reference images are provided, ground that same consistency in what is actually shown in
   those images (appearance, background, props) instead of inventing new traits.
 - Location/setting consistency: if multiple shots take place in or around the same physical
