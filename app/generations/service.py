@@ -161,8 +161,13 @@ def _generate_cut_images(
 
 
 def _download_image(url: str) -> Image.Image:
-    """스레드에서 실행, DB/ORM 접근 X(단순 HTTP 다운로드) - URL 하나를 내려받아 PIL Image로 반환."""
-    return Image.open(BytesIO(httpx.get(url, timeout=30.0).content))
+    """스레드에서 실행, DB/ORM 접근 X(단순 HTTP 다운로드) - URL 하나를 내려받아 PIL Image로 반환.
+
+    ㅡ R2가 에러를 반환해도 httpx는 안 던지므로, raise_for_status로 검증.
+    """
+    response = httpx.get(url, timeout=30.0)
+    response.raise_for_status()
+    return Image.open(BytesIO(response.content))
 
 
 def _build_grid_image(cut_image_urls: list[str]) -> bytes:

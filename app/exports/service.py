@@ -1,6 +1,6 @@
 """이미지 Export 생성 및 결과 조회 비즈니스 로직
 
-ㅡ 옵션 미체크(기본): 새 파일 없이 이미 있는 Generation.grid_image_url을 그대로 재사용
+ㅡ 옵션 미체크(기본): 이미 있는 Generation.grid_image_url을 그대로 재사용
 ㅡ "컷 개별 포함" 옵션 체크: 그리드 1장 + 컷 9장을 zip 하나로 묶어 R2에 신규 업로드
 """
 
@@ -59,8 +59,21 @@ def get_export(db: Session, export_id: int) -> Export | None:
 
 
 def _download_bytes(url: str) -> bytes:
-    """스레드에서 실행 — URL 하나를 그대로 바이트로 다운로드"""
-    return httpx.get(url, timeout=30.0).content
+    """스레드에서 실행 — URL 하나를 그대로 바이트로 다운로드.
+
+    ㅡ R2가 에러를 반환해도 httpx는 안 던지므로, 에러 응답 바디를 zip에 담지 않도록
+    raise_for_status로 검증. 예외가 나면 run_image_export의 catch-all이 잡아서
+    export를 FAILED로 확정.
+    """
+    response = httpx.get(url, timeout=30.0)
+    response.raise_for_status()
+    return response.content
+
+
+def _extension_for_url(url: str) -> str:
+    """URL의 실제 확장자를 그대로 사용 — 컷 이미지가 항상 png라는 보장이 없음(Gemini는 jpeg/webp도 가능)"""
+    filename = url.rsplit("/", 1)[-1]
+    return filename.rsplit(".", 1)[-1] if "." in filename else "png"
 
 
 def _build_image_export_zip(grid_image_url: str, cuts: list[Cut]) -> bytes:
@@ -69,7 +82,8 @@ def _build_image_export_zip(grid_image_url: str, cuts: list[Cut]) -> bytes:
     ㅡ executor.map은 입력 순서를 그대로 보존해서 반환하므로 entries와 contents의 순서가 1:1로 맞음.
     """
     entries = [("grid.png", grid_image_url)] + [
-        (f"cut_{cut.order_no}.png", cut.image_url) for cut in sorted(cuts, key=lambda cut: cut.order_no)
+        (f"cut_{cut.order_no}.{_extension_for_url(cut.image_url)}", cut.image_url)
+        for cut in sorted(cuts, key=lambda cut: cut.order_no)
     ]
 
     with ThreadPoolExecutor(max_workers=len(entries)) as executor:
