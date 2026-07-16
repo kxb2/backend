@@ -20,10 +20,15 @@ from app.storyboards.models import Storyboard
 
 
 def _storyboard_with_completed_generation(storyboard_id: int = 1) -> Storyboard:
+    """9컷 생성까지 전부 끝나고 그리드도 완성된, Export 가능한 정상 상태"""
     storyboard = Storyboard(id=storyboard_id)
     storyboard.generation = Generation(
         storyboard_id=storyboard_id, status=JobStatus.COMPLETED, grid_image_url="https://pub-x.r2.dev/grids/1.png"
     )
+    storyboard.cuts = [
+        Cut(order_no=n, status=JobStatus.COMPLETED, image_url=f"https://pub-x.r2.dev/cuts/{n}.png")
+        for n in range(1, 10)
+    ]
     return storyboard
 
 
@@ -52,16 +57,32 @@ class TestCreateImageExport:
 
         db.add.assert_not_called()
 
-    def test_raises_when_generation_not_completed(self):
-        """9컷 생성이 아직 완료 안 됐으면 GenerationNotCompleted"""
+    def test_raises_generic_message_when_cuts_not_done_yet(self):
+        """컷 자체가 아직 다 안 끝났으면 일반적인 메시지("9컷 생성이 아직...")"""
         storyboard = _storyboard_with_completed_generation()
         storyboard.generation.status = JobStatus.PROCESSING
+        storyboard.cuts[0].status = JobStatus.PROCESSING
         db = Mock()
         db.get.return_value = storyboard
 
-        with pytest.raises(GenerationNotCompleted):
+        with pytest.raises(GenerationNotCompleted) as exc_info:
             create_image_export(db, 1, include_individual_cuts=False)
 
+        assert "그리드" not in str(exc_info.value)
+        db.add.assert_not_called()
+
+    def test_raises_specific_message_when_only_grid_composition_failed(self):
+        """9컷은 전부 완료됐는데 그리드 합성만 실패한 경우엔 별도 메시지로 구분"""
+        storyboard = _storyboard_with_completed_generation()
+        storyboard.generation.status = JobStatus.FAILED
+        storyboard.generation.grid_image_url = None
+        db = Mock()
+        db.get.return_value = storyboard
+
+        with pytest.raises(GenerationNotCompleted) as exc_info:
+            create_image_export(db, 1, include_individual_cuts=False)
+
+        assert "그리드" in str(exc_info.value)
         db.add.assert_not_called()
 
 
@@ -86,7 +107,7 @@ class TestBuildImageExportZip:
         contents_by_url["https://pub-x.r2.dev/grids/1.png"] = b"grid-bytes"
 
         monkeypatch.setattr(
-            "app.exports.service.httpx.get",
+            "app.core.storage.httpx.get",
             lambda url, **kwargs: Mock(content=contents_by_url[url]),
         )
 
