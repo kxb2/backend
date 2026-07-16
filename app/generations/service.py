@@ -29,9 +29,12 @@ logger = logging.getLogger(__name__)
 MAX_INTEGRATED_PROMPT_LENGTH = 3000
 MAX_PROMPT_ATTEMPTS = 3
 # 원래 2번이었는데 생각보다 프롬프트 제한수 잘 걸려서 3회로 늘림
-# (3000자 제한 계속 문제되면 3000자 한도 더 늘려야되나 생각중)
+
 GRID_IMAGE_FOLDER = "grids"
 
+# 미확정 사항: 통합 프롬프트에서 핵심 키워드 추출 확정되면
+# - SYSTEM_PROMPT에 키워드 출력 규칙 추가 → service.py에 키워드 파싱 로직 추가
+#   → 키워드 컬럼 추가 → 응답 스키마 반영 (Claude 프롬프트 생성할때 출력포맷 확장)
 
 # ======= 1. Claude 응답 파싱/검증
 # Claude 출력의 "Shot 1: ...", "Shot 2: ..." 라벨을 순번과 함께 찾는 정규식
