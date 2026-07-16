@@ -10,10 +10,10 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 
-import httpx
 from sqlalchemy.orm import Session
 
 from app.core import storage
+from app.core.constants import CUT_COUNT
 from app.core.enums import ExportType, JobStatus
 from app.db.session import SessionLocal
 from app.exports.models import Export
@@ -32,13 +32,25 @@ class StoryboardNotFound(Exception):
 class GenerationNotCompleted(Exception):
     """9컷 생성이 완료되지 않은 상태에서 Export를 요청한 경우"""
 
+    def __init__(self, message: str = "9컷 생성이 아직 완료되지 않아 Export할 수 없습니다."):
+        super().__init__(message)
+
 
 def create_image_export(db: Session, storyboard_id: int, *, include_individual_cuts: bool) -> Export:
     """이미지 Export job 등록 (실제 처리는 background task인 run_image_export가 수행)"""
     storyboard = db.get(Storyboard, storyboard_id)
     if storyboard is None:
         raise StoryboardNotFound()
-    if storyboard.generation is None or storyboard.generation.status != JobStatus.COMPLETED:
+
+    generation = storyboard.generation
+    if generation is None or generation.status != JobStatus.COMPLETED:
+        # '9컷들 성공 + 그리드 합성만 실패' 경우 구분하려고 메시지 분기
+        if (
+            generation is not None
+            and len(storyboard.cuts) == CUT_COUNT
+            and all(cut.status == JobStatus.COMPLETED for cut in storyboard.cuts)
+        ):
+            raise GenerationNotCompleted("9컷 이미지는 모두 생성됐지만 그리드 합성에 실패했습니다. 다시 시도해 주세요.")
         raise GenerationNotCompleted()
 
     export = Export(
@@ -58,18 +70,6 @@ def get_export(db: Session, export_id: int) -> Export | None:
     return db.get(Export, export_id)
 
 
-def _download_bytes(url: str) -> bytes:
-    """스레드에서 실행 — URL 하나를 그대로 바이트로 다운로드.
-
-    ㅡ R2가 에러를 반환해도 httpx는 안 던지므로, 에러 응답 바디를 zip에 담지 않도록
-    raise_for_status로 검증. 예외가 나면 run_image_export의 catch-all이 잡아서
-    export를 FAILED로 확정.
-    """
-    response = httpx.get(url, timeout=30.0)
-    response.raise_for_status()
-    return response.content
-
-
 def _extension_for_url(url: str) -> str:
     """URL의 실제 확장자를 그대로 사용 — 컷 이미지가 항상 png라는 보장이 없음(Gemini는 jpeg/webp도 가능)"""
     filename = url.rsplit("/", 1)[-1]
@@ -87,7 +87,7 @@ def _build_image_export_zip(grid_image_url: str, cuts: list[Cut]) -> bytes:
     ]
 
     with ThreadPoolExecutor(max_workers=len(entries)) as executor:
-        contents = list(executor.map(lambda entry: _download_bytes(entry[1]), entries))
+        contents = list(executor.map(lambda entry: storage.download_bytes(entry[1]), entries))
 
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:

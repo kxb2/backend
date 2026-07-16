@@ -109,9 +109,7 @@ def create_image_export(
     except exports_service.StoryboardNotFound as exc:
         raise HTTPException(status_code=404, detail="storyboard not found") from exc
     except exports_service.GenerationNotCompleted as exc:
-        raise HTTPException(
-            status_code=409, detail="9컷 생성이 아직 완료되지 않아 Export할 수 없습니다."
-        ) from exc
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     background_tasks.add_task(run_image_export, export.id)
 

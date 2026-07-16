@@ -9,7 +9,6 @@ import re
 from concurrent.futures import ThreadPoolExecutor, wait
 from io import BytesIO
 
-import httpx
 from PIL import Image
 from sqlalchemy.orm import Session
 
@@ -161,13 +160,11 @@ def _generate_cut_images(
 
 
 def _download_image(url: str) -> Image.Image:
-    """스레드에서 실행, DB/ORM 접근 X(단순 HTTP 다운로드) - URL 하나를 내려받아 PIL Image로 반환.
+    """스레드에서 실행, DB/ORM 접근 X(HTTP 다운로드) - URL → PIL Image.
 
-    ㅡ R2가 에러를 반환해도 httpx는 안 던지므로, raise_for_status로 검증.
+    ㅡ storage.py의 R2 다운로드 재시도 로직 사용(download_bytes)
     """
-    response = httpx.get(url, timeout=30.0)
-    response.raise_for_status()
-    return Image.open(BytesIO(response.content))
+    return Image.open(BytesIO(storage.download_bytes(url)))
 
 
 def _build_grid_image(cut_image_urls: list[str]) -> bytes:
@@ -201,6 +198,7 @@ def get_generation(db: Session, generation_id: int) -> Generation | None:
     return db.get(Generation, generation_id)
 
 
+# 서버 떠있는 상태에서 백그라운드 태스크 멈출때(스레드 데드락)도 주기적으로 훑는거 추가 고려
 def recover_stuck_generations(db: Session) -> int:
     """서버 시작 시(배포로 인한 컨테이너 재시작 등) 호출
     
