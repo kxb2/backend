@@ -5,6 +5,9 @@ from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from app.db.session import get_db
+from app.exports import service as exports_service
+from app.exports.schemas import ExportCreateResponse, ImageExportRequest
+from app.exports.service import run_image_export
 from app.generations.service import run_generation
 from app.storyboards import service
 from app.storyboards.schemas import (
@@ -87,3 +90,27 @@ def get_storyboard_prompt(storyboard_id: int, db: Session = Depends(get_db)) -> 
     return StoryboardPromptResponse(
         storyboard_id=storyboard.id, integrated_prompt=storyboard.integrated_prompt
     )
+
+
+@router.post(
+    "/{storyboard_id}/exports/image", response_model=ExportCreateResponse, status_code=201
+)
+def create_image_export(
+    storyboard_id: int,
+    request: ImageExportRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> ExportCreateResponse:
+    """이미지 Export 요청 (기본: 3x3 그리드 1장, 옵션: 컷 개별 이미지 포함 zip)"""
+    try:
+        export = exports_service.create_image_export(
+            db, storyboard_id, include_individual_cuts=request.include_individual_cuts
+        )
+    except exports_service.StoryboardNotFound as exc:
+        raise HTTPException(status_code=404, detail="storyboard not found") from exc
+    except exports_service.GenerationNotCompleted as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    background_tasks.add_task(run_image_export, export.id)
+
+    return ExportCreateResponse(export_id=export.id, status=export.status)

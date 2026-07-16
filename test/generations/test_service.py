@@ -260,7 +260,7 @@ class TestBuildGridImage:
         tile_bytes_by_url = {url: _solid_png_bytes(colors[i]) for i, url in enumerate(urls)}
 
         monkeypatch.setattr(
-            "app.generations.service.httpx.get",
+            "app.core.storage.httpx.get",
             lambda url, **kwargs: Mock(content=tile_bytes_by_url[url]),
         )
 
