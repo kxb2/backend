@@ -1,14 +1,10 @@
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.enums import ExportType, JobStatus, enum_values
 from app.db.base import Base
-
-if TYPE_CHECKING:
-    from app.storyboards.models import Storyboard
 
 _status_type = Enum(
     JobStatus, native_enum=False, length=20, validate_strings=True, values_callable=enum_values
@@ -34,5 +30,3 @@ class Export(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
-
-    storyboard: Mapped["Storyboard"] = relationship()
