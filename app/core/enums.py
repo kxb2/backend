@@ -24,3 +24,8 @@ class Genre(StrEnum):
     ROMANCE = "로맨스"
     THRILLER = "스릴러"
     COMEDY = "코미디"
+
+
+class ExportType(StrEnum):
+    PDF = "pdf"
+    IMAGE = "image"
