@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 IMAGE_FOLDER = "cuts"
 
 # ===== 화면비(aspect_ratio) 처리 정리 =====
-# [GPT: gpt-image-1]
+# [GPT: gpt-image-1] → png(무손실) 고정
 # - `size` 파라미터가 픽셀 사이즈 3개(+"auto")만 받는 OpenAI API 자체 제약:
 #   가로 1536x1024(=3:2) / 세로 1024x1536(=2:3) / 정사각형 1024x1024(=1:1)
 # - 그래서 "16:9", "4:3"처럼 임의의 화면비를 요청해도 실제로는 이 3개 중 하나로 근사됨
@@ -35,7 +35,7 @@ IMAGE_FOLDER = "cuts"
 # - 일단 aspect_ratio가 없거나 못 읽으면 1536x1024(=3:2) 기본값 고정.
 #   "auto" 쓰면 9컷이 각자 지맘대로 골라서 그리드 보니까 몇개 찌그러짐
 #
-# [Gemini: gemini-3.1-flash-image]
+# [Gemini: gemini-3.1-flash-image] → 지가 고르는데 jpeg만 줌
 # - `ImageConfig.aspect_ratio`는 GPT처럼 픽셀 사이즈 근사가 필요 없이 비율 문자열을 그대로 받음.
 #   설치된 SDK(google-genai==2.11.0) 타입 정의 기준 지원값 8개:
 #   "1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9", "21:9"

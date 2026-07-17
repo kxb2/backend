@@ -10,3 +10,4 @@ openai==2.45.0
 google-genai==2.11.0
 Pillow==12.3.0
 httpx==0.28.1
+reportlab==5.0.0
