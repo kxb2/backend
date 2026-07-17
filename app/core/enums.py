@@ -15,7 +15,7 @@ class JobStatus(StrEnum):
 
 class ImageModel(StrEnum):
     GPT_IMAGE = "gpt_image"
-    GEMINI_3_5_FLASH_IMAGE = "gemini_3_5_flash_image"
+    GEMINI_3_1_FLASH_IMAGE = "gemini_3_1_flash_image"
 
 
 class Genre(StrEnum):

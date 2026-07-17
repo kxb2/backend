@@ -177,6 +177,6 @@ def get_image_adapter(image_model: ImageModel) -> ImageAdapter:
     """storyboards.image_model 값에 따라 GPT/Gemini 이미지 어댑터로 분기."""
     if image_model == ImageModel.GPT_IMAGE:
         return GptImageAdapter()
-    if image_model == ImageModel.GEMINI_3_5_FLASH_IMAGE:
+    if image_model == ImageModel.GEMINI_3_1_FLASH_IMAGE:
         return GeminiImageAdapter()
     raise ValueError(f"지원하지 않는 이미지 모델입니다: {image_model}")
