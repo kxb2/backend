@@ -68,7 +68,7 @@ def upload_bytes(data: bytes, key: str, content_type: str) -> str:
         logger.info("R2 업로드 완료: key=%s", key)
     except (BotoCoreError, ClientError) as e:
         logger.error("R2 업로드 실패: key=%s err=%s", key, e)
-        raise HTTPException(status_code=503, detail="파일 업로드에 실패했습니다.") from e
+        raise HTTPException(status_code=503, detail=f"파일 업로드에 실패했습니다: {e}") from e
 
     return f"{settings.r2_public_url}/{key}"
 

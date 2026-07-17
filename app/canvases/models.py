@@ -17,6 +17,7 @@ from app.db.base import Base
 #     이거 nullable, 왜냐면 사용자가 업로드하는 이미지는 참조 없이 content_url만 있으니까
 # - canvas_connections: canvas_id(FK), from_element_id, to_element_id — 노드 연결(선 잇기)
 # - 영상 업로드: content-type mp4/webm 등으로 제한, 용량 캡 50~100MB 예정 (reference_images 검증 로직 재사용)
+#              + 영상만 백엔드 안 거치고 url 올리는 R2 방식 사용할까 고려중
 # - 이미지/영상 첨부는 툴바 `+` 버튼
 # - 그룹화 섹션 추가: 안의 요소들을 자식으로 관리하고, 마우스 드래그하면 여러개 묶이는 컨테이너 개념(자기참조 FK 필요?)
 # - 메모(포스트잇처럼 블록덩어리): 상단바에 메모 제목, 하단에 메모 내용(텍스트 입력)
