@@ -137,3 +137,4 @@ class TestRunImageExportFailure:
         export = _load_export(session_factory, export_id)
         assert export.status == JobStatus.FAILED
         assert export.download_url is None
+        assert export.error_message == "download failed"

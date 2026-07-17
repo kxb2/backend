@@ -90,6 +90,18 @@ class TestCreateImageExport:
         assert "그리드" in str(exc_info.value)
         db.add.assert_not_called()
 
+    def test_raises_when_generation_completed_but_cut_count_mismatches(self):
+        """status는 COMPLETED인데 실제 컷 개수/상태가 안 맞는 이례적 상태도 방어적으로 차단하는지"""
+        storyboard = _storyboard_with_completed_generation()
+        storyboard.cuts = storyboard.cuts[:8]  # 9개여야 하는데 8개뿐인 이례적 상태
+        db = Mock()
+        db.get.return_value = storyboard
+
+        with pytest.raises(GenerationNotCompleted):
+            create_image_export(db, 1, include_individual_cuts=False)
+
+        db.add.assert_not_called()
+
 
 class TestCreatePdfExport:
     def test_creates_export_row_with_pending_status(self):
@@ -119,6 +131,18 @@ class TestCreatePdfExport:
         """9컷 생성이 아직 안 끝났으면 PDF도 마찬가지로 GenerationNotCompleted"""
         storyboard = _storyboard_with_completed_generation()
         storyboard.generation.status = JobStatus.PROCESSING
+        db = Mock()
+        db.get.return_value = storyboard
+
+        with pytest.raises(GenerationNotCompleted):
+            create_pdf_export(db, 1)
+
+        db.add.assert_not_called()
+
+    def test_raises_when_generation_completed_but_cut_count_mismatches(self):
+        """status는 COMPLETED인데 실제 컷 개수/상태가 안 맞는 이례적 상태도 방어적으로 차단하는지"""
+        storyboard = _storyboard_with_completed_generation()
+        storyboard.cuts = storyboard.cuts[:8]  # 9개여야 하는데 8개뿐인 이례적 상태
         db = Mock()
         db.get.return_value = storyboard
 
@@ -245,3 +269,19 @@ class TestBuildPdfExport:
         reader = PdfReader(BytesIO(pdf_bytes))
         assert len(reader.pages) == 1
         assert "Shot 1" in reader.pages[0].extract_text()
+
+    def test_prompt_text_with_markup_special_characters_is_escaped(self, monkeypatch):
+        """prompt_text(Claude 생성 텍스트)에 &, <, > 가 들어있어도 reportlab 마크업으로 오인되지 않고
+        원문 그대로 보존되는지 — 이스케이프 안 하면 내용이 조용히 손상되거나 파싱 에러로 export 자체가 실패함"""
+        tricky_text = "Camera at <50mm lens>, subject wears an AT&T cap, height < 6ft & > 5ft"
+        cuts = [Cut(order_no=1, image_url="https://pub-x.r2.dev/cuts/1.png", prompt_text=tricky_text)]
+
+        png_bytes = _solid_png_bytes()
+        monkeypatch.setattr(
+            "app.core.storage.httpx.get", lambda url, **kwargs: Mock(content=png_bytes)
+        )
+
+        pdf_bytes = _build_pdf_export(cuts)
+
+        reader = PdfReader(BytesIO(pdf_bytes))
+        assert tricky_text in reader.pages[0].extract_text()

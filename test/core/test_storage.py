@@ -1,9 +1,11 @@
 import httpx
 import pytest
+from botocore.exceptions import ClientError
+from fastapi import HTTPException
 
 from app.core import storage
 
-"""R2 관련 download_bytes의 재시도 동작 테스트"""
+"""R2 관련 download_bytes의 재시도 동작, upload_bytes 에러 메시지 테스트"""
 
 @pytest.fixture(autouse=True)
 def _no_sleep(monkeypatch):
@@ -90,3 +92,21 @@ class TestDownloadBytes:
             storage.download_bytes("https://pub-x.r2.dev/test.png")
 
         assert len(calls) == 1 + storage.MAX_DOWNLOAD_RETRIES
+
+
+class TestUploadBytes:
+    def test_includes_underlying_error_detail_on_failure(self, monkeypatch):
+        """R2 업로드 실패 시 HTTPException detail에 고정 문구뿐 아니라 원본 에러 내용까지 포함되는지
+        (error_message로 저장됐을 때 실제 원인을 알 수 있어야 함)"""
+        error = ClientError({"Error": {"Code": "AccessDenied", "Message": "denied"}}, "PutObject")
+
+        class _FakeClient:
+            def put_object(self, **kwargs):
+                raise error
+
+        monkeypatch.setattr(storage, "_get_client", lambda: _FakeClient())
+
+        with pytest.raises(HTTPException) as exc_info:
+            storage.upload_bytes(b"data", key="test.png", content_type="image/png")
+
+        assert "AccessDenied" in exc_info.value.detail
