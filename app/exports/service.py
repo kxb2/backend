@@ -10,6 +10,7 @@ import uuid
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
+from xml.sax.saxutils import escape
 
 from PIL import Image as PILImage
 from reportlab.lib.pagesizes import A4
@@ -57,14 +58,19 @@ def _get_exportable_storyboard(db: Session, storyboard_id: int) -> Storyboard:
         raise StoryboardNotFound()
 
     generation = storyboard.generation
+    cuts_all_completed = (
+        len(storyboard.cuts) == CUT_COUNT
+        and all(cut.status == JobStatus.COMPLETED for cut in storyboard.cuts)
+    )
+
     if generation is None or generation.status != JobStatus.COMPLETED:
         # '9컷들 성공 + 그리드 합성만 실패' 경우 구분하려고 메시지 분기
-        if (
-            generation is not None
-            and len(storyboard.cuts) == CUT_COUNT
-            and all(cut.status == JobStatus.COMPLETED for cut in storyboard.cuts)
-        ):
+        if generation is not None and cuts_all_completed:
             raise GenerationNotCompleted("9컷 이미지는 모두 생성됐지만 그리드 합성에 실패했습니다. 다시 시도해 주세요.")
+        raise GenerationNotCompleted()
+
+    if not cuts_all_completed:
+        # generation.status는 COMPLETED인데 실제 컷 개수/상태가 안 맞는 이례적 상태 — 방어적으로 차단
         raise GenerationNotCompleted()
 
     return storyboard
@@ -154,7 +160,7 @@ def run_image_export(export_id: int) -> None:
         export.download_url = download_url
         export.status = JobStatus.COMPLETED
         db.commit()
-    except Exception:
+    except Exception as exc:
         # 위에서 에러(다운로드 실패 등)가 나도 PROCESSING에 영원히 멈추지 않도록,
         # 최종적으로는 반드시 FAILED로 확정
         logger.exception("run_image_export 실패 (export_id=%d)", export_id)
@@ -162,6 +168,7 @@ def run_image_export(export_id: int) -> None:
             db.rollback()
             export = db.get(Export, export_id)
             export.status = JobStatus.FAILED
+            export.error_message = str(exc)
             db.commit()
         except Exception:
             logger.exception("run_image_export 실패 후 FAILED 상태 기록도 실패 (export_id=%d)", export_id)
@@ -217,7 +224,10 @@ def _build_pdf_export(cuts: list[Cut]) -> bytes:
         elements.append(RLImage(BytesIO(image_bytes), width=width * scale, height=height * scale))
         elements.append(Spacer(1, 0.5 * cm))
         elements.append(Paragraph(f"Shot {cut.order_no}", styles["Heading2"]))
-        elements.append(Paragraph(cut.prompt_text or "", styles["BodyText"]))
+        # prompt_text는 Claude(LLM)가 생성한 텍스트라 &, <, > 포함 여부를 통제 못 함 —
+        # reportlab Paragraph는 이 문자들을 자체 마크업으로 파싱해서 이스케이프 없이 넣으면
+        # 내용이 조용히 손상되거나(예: "AT&T" -> "AT&T;") 특정 패턴에서 파싱 에러로 export가 실패함
+        elements.append(Paragraph(escape(cut.prompt_text or ""), styles["BodyText"]))
         if index < len(sorted_cuts) - 1:
             elements.append(PageBreak())
 
@@ -245,7 +255,7 @@ def run_pdf_export(export_id: int) -> None:
         export.download_url = download_url
         export.status = JobStatus.COMPLETED
         db.commit()
-    except Exception:
+    except Exception as exc:
         # 위에서 에러(다운로드/PDF 합성 실패 등)가 나도 PROCESSING에 영원히 멈추지 않도록,
         # 최종적으로는 반드시 FAILED로 확정
         logger.exception("run_pdf_export 실패 (export_id=%d)", export_id)
@@ -253,6 +263,7 @@ def run_pdf_export(export_id: int) -> None:
             db.rollback()
             export = db.get(Export, export_id)
             export.status = JobStatus.FAILED
+            export.error_message = str(exc)
             db.commit()
         except Exception:
             logger.exception("run_pdf_export 실패 후 FAILED 상태 기록도 실패 (export_id=%d)", export_id)
