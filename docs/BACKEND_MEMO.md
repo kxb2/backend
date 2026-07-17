@@ -2,6 +2,7 @@
 ## 확정 사항
 - 프론트 배포는 Vercel, 백엔드 배포는 AWS EC2
 - 배포: AWS EC2 (t3.small, 서울 ap-northeast-2, Ubuntu 24.04 LTS, 30GB) — 전 개발자 Dockerfile/docker-compose/GitHub Actions(`deploy.yml`) 재사용, Dockerfile만 Python(FastAPI)용으로 교체
+- 배포 추가 설정: nginx, HTTPS, Let's Encrypt, duckdns 도메인 완료
 - 프롬프트 생성: Claude API (PRD 기술스택 확정 사항)
 - 이미지 생성: GPT image(기본값) / Gemini 3.1 Flash Image, 어댑터 패턴으로 호출
 - 유저/ 로그인 최종 확정 정책: 사내 이메일(도메인) 제한 없음, 일반 이메일 회원가입/로그인 및 구글 소셜 로그인(OAuth) 동시 지원. 일반 이메일 가입은 가입 링크만 있으면 누구나 가입 가능한 구조로 진행. 최초 검토했던 폐쇄형 화이트리스트 방식에서 '일반 유저 가입이 가능한 오픈형 방식'으로 기획 방향이 변경.
@@ -12,8 +13,7 @@
 
 
 ## 검토 중 (미확정)
-- 마이그레이션: Alembic 예정 (models.py DB 스키마 안정화된후 세팅) -> 연결후엔 db 밀때 alembic 관련도 포함시켜야함, 프론트랑 연결되기 전에 alembic 설정과 db 설계 끝내야함
-- EC2 지원받으면: docker-compose.prod.yml에 nginx나 HTTPS설정 / vercel은 기본적으로 https 서빙, ec2 앞에 도메인 + HTTPS(nginx reverse proxy + Let's Encrypt 등)를 붙여야 할 수도
+- 마이그레이션: Alembic 예정 (models.py DB 스키마 안정화된후 세팅) -> 연결후엔 db 밀때 alembic 관련도 포함시켜야함, 프론트랑 연결되기 전에 alembic 설정과 db 설계 끝내야함(엥 아직 alembic 안붙임)
 - 로컬 개발 DB와 배포 DB는 **분리 안 하고 하나만 사용하기로 결정**  `PROD_DATABASE_URL` secret은 로컬 `.env`의 `DATABASE_URL`과 **동일한 값**으로 등록하면 됨(`docker-compose.prod.yml`이 이미 그 이름을 참조하고 있어서 코드 수정 불필요). 대신 **실제 배포(`develop→main`) 직전에 테스트용 row 정리**하는 걸 체크리스트에 넣기 (storyboards 삭제 시 reference_images/generations/cuts는 cascade로 같이 지워짐) → 의견 물어보거나 더 나은 방향 있으면 배포 DB 따로 할수도 있고, 환경에 따라 자동화나... 다른 방향 생각해보는중.
 - PRD 7번 장르별 기본 앵글 설정 아직은 필요없는데 추후 넣어야되면: Claude 프롬프트 및 로직 다시 짜야함
 
@@ -35,7 +35,7 @@
 
 ## R2에 실제로 파일이 올라가는 것 (보존기간 후 삭제 대상도 동일)
 
-1. 레퍼런스 업로드 이미지 — ReferenceImage.image_url
+1. 사용자의 레퍼런스 업로드 이미지 — ReferenceImage.image_url
 2. 컷별 개별 생성 이미지 — Cut.image_url (9장)
 3. 9컷 그리드 이미지 — Generation.grid_image_url (개별 컷 미포함 이미지 Export 기본값과 동일)
 4. PDF Export 문서 — Export.download_url (type=pdf, 항상 신규)
@@ -109,6 +109,9 @@
 
 ## 나중에 필요하면 고려 (지금은 안 함)
 - **`POST /storyboards` idempotency key**: storyboard 저장은 성공했는데 9컷 생성 job 등록(enqueue)만 실패하는 경우, 재시도 시 storyboard row가 중복 생성될 수 있음. 문제 되면 같은 입력(or idempotency key)이면 기존 storyboard를 재사용하도록 처리하는 것 고려. 60시간 MVP라 지금 우선순위 아님 — 중복 row 생겨도 당장은 무해함.
+- job 등록(enqueue) 실패"는 딱 두 가지
+> storyboard/generation/cut row는 DB에 commit됐는데(=db.commit() 성공), 그 이후 서버 프로세스가 죽거나 add_task 자체가 뻗어서 run_generation이 실제로 스케줄조차 안 된 경우
+> 클라이언트가 응답을 못 받아서(타임아웃/네트워크 끊김) 같은 요청을 재시도하는 경우
 
 
 ## 전체 파이프라인 그림 (A/B/C조)

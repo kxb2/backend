@@ -23,7 +23,7 @@ from app.storyboards.models import Storyboard
 logger = logging.getLogger(__name__)
 
 EXPORT_ZIP_FOLDER = "export-images"
-
+# BytesIO: 가상메모리 / zipfile: 압축 관련 파이썬 기본 라이브러리
 
 class StoryboardNotFound(Exception):
     """존재하지 않는 storyboard_id로 Export를 요청한 경우"""
