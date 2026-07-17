@@ -156,7 +156,7 @@ class TestGenerateAndApplyPrompt:
         storyboard = _storyboard_with_cuts()
         adapter = _FakePromptAdapter([_integrated_prompt()])
 
-        assert _generate_and_apply_prompt(Mock(), storyboard, adapter) is True
+        assert _generate_and_apply_prompt(Mock(), storyboard, adapter) is None
         assert adapter.calls == 1
 
     def test_retries_once_after_malformed_response_then_succeeds(self):
@@ -164,15 +164,16 @@ class TestGenerateAndApplyPrompt:
         storyboard = _storyboard_with_cuts()
         adapter = _FakePromptAdapter(["malformed, no shot labels", _integrated_prompt()])
 
-        assert _generate_and_apply_prompt(Mock(), storyboard, adapter) is True
+        assert _generate_and_apply_prompt(Mock(), storyboard, adapter) is None
         assert adapter.calls == 2
 
-    def test_returns_false_after_max_attempts_all_malformed(self):
-        """MAX_PROMPT_ATTEMPTS(3)번 다 형식 오류면 False 반환"""
+    def test_returns_last_error_after_max_attempts_all_malformed(self):
+        """MAX_PROMPT_ATTEMPTS(3)번 다 형식 오류면 마지막 시도의 에러 메시지 반환"""
         storyboard = _storyboard_with_cuts()
         adapter = _FakePromptAdapter(["malformed 1", "malformed 2", "malformed 3"])
 
-        assert _generate_and_apply_prompt(Mock(), storyboard, adapter) is False
+        error = _generate_and_apply_prompt(Mock(), storyboard, adapter)
+        assert error is not None
         assert adapter.calls == 3
 
     def test_retries_after_adapter_error_too(self):
@@ -180,7 +181,7 @@ class TestGenerateAndApplyPrompt:
         storyboard = _storyboard_with_cuts()
         adapter = _FakePromptAdapter([AIAdapterError("claude down"), _integrated_prompt()])
 
-        assert _generate_and_apply_prompt(Mock(), storyboard, adapter) is True
+        assert _generate_and_apply_prompt(Mock(), storyboard, adapter) is None
         assert adapter.calls == 2
 
 
@@ -215,11 +216,13 @@ class TestGenerateCutImages:
         results = _generate_cut_images(adapter, cuts, aspect_ratio="16:9")
 
         for cut in cuts:
-            assert results[cut.id] == f"https://pub-x.r2.dev/cuts/{cut.order_no}.png"
+            url, error = results[cut.id]
+            assert url == f"https://pub-x.r2.dev/cuts/{cut.order_no}.png"
+            assert error is None
         assert all(call[1] == "16:9" for call in adapter.calls)
 
     def test_failed_cuts_map_to_none_without_affecting_others(self):
-        """일부 컷만 실패해도(AIAdapterError) 나머지 컷은 정상적으로 URL 반환"""
+        """일부 컷만 실패해도(AIAdapterError) 나머지 컷은 정상적으로 URL 반환, 실패한 컷은 에러 메시지도 같이 반환"""
         cuts = _cuts_with_prompts()
         responses = {f"prompt-{n}": f"https://pub-x.r2.dev/cuts/{n}.png" for n in range(1, 10)}
         responses["prompt-5"] = AIAdapterError("image gen failed")
@@ -227,9 +230,9 @@ class TestGenerateCutImages:
 
         results = _generate_cut_images(adapter, cuts, aspect_ratio=None)
 
-        assert results[5] is None
-        assert results[1] == "https://pub-x.r2.dev/cuts/1.png"
-        assert results[9] == "https://pub-x.r2.dev/cuts/9.png"
+        assert results[5] == (None, "image gen failed")
+        assert results[1] == ("https://pub-x.r2.dev/cuts/1.png", None)
+        assert results[9] == ("https://pub-x.r2.dev/cuts/9.png", None)
 
     def test_non_ai_adapter_error_also_fails_only_that_cut(self):
         """R2 업로드 실패처럼 AIAdapterError가 아닌 예외도, 그 컷만 실패 처리되고 나머지·전체 흐름은 안 죽나"""
@@ -240,9 +243,9 @@ class TestGenerateCutImages:
 
         results = _generate_cut_images(adapter, cuts, aspect_ratio=None)
 
-        assert results[5] is None
-        assert results[1] == "https://pub-x.r2.dev/cuts/1.png"
-        assert results[9] == "https://pub-x.r2.dev/cuts/9.png"
+        assert results[5] == (None, "R2 upload failed")
+        assert results[1] == ("https://pub-x.r2.dev/cuts/1.png", None)
+        assert results[9] == ("https://pub-x.r2.dev/cuts/9.png", None)
 
 
 def _solid_png_bytes(color: tuple[int, int, int], size: tuple[int, int] = (2, 2)) -> bytes:

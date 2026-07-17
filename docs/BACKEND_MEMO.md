@@ -14,6 +14,7 @@
 
 ## 검토 중 (미확정)
 - 마이그레이션: Alembic 예정 (models.py DB 스키마 안정화된후 세팅) -> 연결후엔 db 밀때 alembic 관련도 포함시켜야함, 프론트랑 연결되기 전에 alembic 설정과 db 설계 끝내야함(엥 아직 alembic 안붙임)
++ alembic 처음 도입할때ㅡ 실제 db랑 models.py 정확히 일치해야 깨끗하게 시작 가능. 체크하고 넣기
 - 로컬 개발 DB와 배포 DB는 **분리 안 하고 하나만 사용하기로 결정**  `PROD_DATABASE_URL` secret은 로컬 `.env`의 `DATABASE_URL`과 **동일한 값**으로 등록하면 됨(`docker-compose.prod.yml`이 이미 그 이름을 참조하고 있어서 코드 수정 불필요). 대신 **실제 배포(`develop→main`) 직전에 테스트용 row 정리**하는 걸 체크리스트에 넣기 (storyboards 삭제 시 reference_images/generations/cuts는 cascade로 같이 지워짐) → 의견 물어보거나 더 나은 방향 있으면 배포 DB 따로 할수도 있고, 환경에 따라 자동화나... 다른 방향 생각해보는중.
 - PRD 7번 장르별 기본 앵글 설정 아직은 필요없는데 추후 넣어야되면: Claude 프롬프트 및 로직 다시 짜야함
 

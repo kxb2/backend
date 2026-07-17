@@ -25,6 +25,7 @@ class Generation(Base):
     )
     status: Mapped[JobStatus] = mapped_column(_status_type, default=JobStatus.PENDING)
     grid_image_url: Mapped[str | None] = mapped_column(String(500))
+    error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -46,6 +47,7 @@ class Cut(Base):
     angle_type: Mapped[str | None] = mapped_column(String(50))
     image_url: Mapped[str | None] = mapped_column(String(500))
     status: Mapped[JobStatus] = mapped_column(_status_type, default=JobStatus.PENDING)
+    error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
