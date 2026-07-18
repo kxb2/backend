@@ -117,7 +117,7 @@ def _extension_for_url(url: str) -> str:
 def _build_image_export_zip(grid_image_url: str, cuts: list[Cut]) -> bytes:
     """그리드 이미지 1장 + 컷별 개별 이미지 9장을 zip 하나로 묶음.
 
-    ㅡ executor.map은 입력 순서를 그대로 보존해서 반환하므로 entries와 contents의 순서가 1:1로 맞음.
+    ㅡ executor.map은 입력 순서를 그대로 보존해서 '입력 순서 = 결과 반환 순서'
     """
     entries = [("grid.png", grid_image_url)] + [
         (f"cut_{cut.order_no}.{_extension_for_url(cut.image_url)}", cut.image_url)
@@ -152,7 +152,10 @@ def run_image_export(export_id: int) -> None:
         if export.include_individual_cuts:
             zip_bytes = _build_image_export_zip(generation.grid_image_url, storyboard.cuts)
             download_url = storage.upload_bytes(
-                zip_bytes, key=f"{EXPORT_ZIP_FOLDER}/{uuid.uuid4().hex}.zip", content_type="application/zip"
+                zip_bytes,
+                key=f"{EXPORT_ZIP_FOLDER}/{uuid.uuid4().hex}.zip",
+                content_type="application/zip",
+                filename=f"storyboard_{storyboard.id}_images.zip",
             )
         else:
             download_url = generation.grid_image_url
@@ -221,7 +224,9 @@ def _build_pdf_export(cuts: list[Cut]) -> bytes:
         width, height = PILImage.open(BytesIO(image_bytes)).size
         scale = min(_PDF_MAX_IMAGE_WIDTH / width, _PDF_MAX_IMAGE_HEIGHT / height, 1.0)
 
-        elements.append(RLImage(BytesIO(image_bytes), width=width * scale, height=height * scale))
+        image = RLImage(BytesIO(image_bytes), width=width * scale, height=height * scale)
+        image.hAlign = "CENTER"  # 첨부되는 컷별 이미지 가운데 정렬
+        elements.append(image)
         elements.append(Spacer(1, 0.5 * cm))
         elements.append(Paragraph(f"Shot {cut.order_no}", styles["Heading2"]))
         # prompt_text는 Claude(LLM)가 생성한 텍스트라 &, <, > 포함 여부를 통제 못 함 —
@@ -249,7 +254,10 @@ def run_pdf_export(export_id: int) -> None:
         storyboard = db.get(Storyboard, export.storyboard_id)
         pdf_bytes = _build_pdf_export(storyboard.cuts)
         download_url = storage.upload_bytes(
-            pdf_bytes, key=f"{EXPORT_PDF_FOLDER}/{uuid.uuid4().hex}.pdf", content_type="application/pdf"
+            pdf_bytes,
+            key=f"{EXPORT_PDF_FOLDER}/{uuid.uuid4().hex}.pdf",
+            content_type="application/pdf",
+            filename=f"storyboard_{storyboard.id}.pdf",
         )
 
         export.download_url = download_url

@@ -55,15 +55,24 @@ def _get_client() -> BaseClient:
     )
 
 
-def upload_bytes(data: bytes, key: str, content_type: str) -> str:
-    """바이트 데이터를 R2 버킷에 업로드하고 공개 URL을 반환."""
+def upload_bytes(data: bytes, key: str, content_type: str, *, filename: str | None = None) -> str:
+    """바이트 데이터를 R2 버킷에 업로드하고 공개 URL을 반환.
+
+    ㅡ PDF, zip: Content-Disposition: attachment로 저장 (다운로드 강제)
+      (그리드, 컷별 이미지는 화면 렌더링 때문에 냅둠)
+    """
     try:
         client = _get_client()
+        extra_args = {}
+        if filename is not None:
+            extra_args["ContentDisposition"] = f'attachment; filename="{filename}"'
+
         client.put_object(
             Bucket=settings.r2_bucket_name,
             Key=key,
             Body=data,
             ContentType=content_type,
+            **extra_args,
         )
         logger.info("R2 업로드 완료: key=%s", key)
     except (BotoCoreError, ClientError) as e:
