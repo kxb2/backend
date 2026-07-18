@@ -270,6 +270,29 @@ class TestBuildPdfExport:
         assert len(reader.pages) == 1
         assert "Shot 1" in reader.pages[0].extract_text()
 
+    def test_narrow_image_is_center_aligned(self, monkeypatch):
+        """세로로 좁은 이미지가 페이지 폭을 다 못 채울 때 왼쪽으로 치우치지 않고 가운데 정렬되는지"""
+        import app.exports.service as exports_service
+
+        cuts = [Cut(order_no=1, image_url="https://pub-x.r2.dev/cuts/1.png", prompt_text="a tall image")]
+        tall_png_bytes = _solid_png_bytes(size=(100, 200))
+        monkeypatch.setattr(
+            "app.core.storage.httpx.get", lambda url, **kwargs: Mock(content=tall_png_bytes)
+        )
+
+        created_images = []
+        original_rlimage = exports_service.RLImage
+        monkeypatch.setattr(
+            exports_service,
+            "RLImage",
+            lambda *args, **kwargs: created_images.append(original_rlimage(*args, **kwargs)) or created_images[-1],
+        )
+
+        _build_pdf_export(cuts)
+
+        assert len(created_images) == 1
+        assert created_images[0].hAlign == "CENTER"
+
     def test_prompt_text_with_markup_special_characters_is_escaped(self, monkeypatch):
         """prompt_text(Claude 생성 텍스트)에 &, <, > 가 들어있어도 reportlab 마크업으로 오인되지 않고
         원문 그대로 보존되는지 — 이스케이프 안 하면 내용이 조용히 손상되거나 파싱 에러로 export 자체가 실패함"""

@@ -104,10 +104,12 @@ class TestRunImageExportWithIndividualCuts:
     def test_builds_zip_and_uploads_it(self, monkeypatch, session_factory):
         """옵션 체크: zip을 새로 만들어 업로드하고, 그 URL이 download_url로 반영되는지"""
         monkeypatch.setattr(service, "_build_image_export_zip", lambda grid_url, cuts: b"fake-zip-bytes")
+        upload_calls = []
         monkeypatch.setattr(
             service.storage,
             "upload_bytes",
-            lambda data, key, content_type: "https://pub-x.r2.dev/export-images/fake.zip",
+            lambda data, key, content_type, filename=None: upload_calls.append(filename)
+            or "https://pub-x.r2.dev/export-images/fake.zip",
         )
 
         storyboard_id = _create_completed_storyboard(session_factory)
@@ -118,6 +120,7 @@ class TestRunImageExportWithIndividualCuts:
         export = _load_export(session_factory, export_id)
         assert export.status == JobStatus.COMPLETED
         assert export.download_url == "https://pub-x.r2.dev/export-images/fake.zip"
+        assert upload_calls == [f"storyboard_{storyboard_id}_images.zip"]
 
 
 class TestRunImageExportFailure:

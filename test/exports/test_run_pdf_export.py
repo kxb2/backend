@@ -89,10 +89,12 @@ class TestRunPdfExport:
     def test_builds_pdf_and_uploads_it(self, monkeypatch, session_factory):
         """PDF를 새로 만들어 업로드하고, 그 URL이 download_url로 반영되는지"""
         monkeypatch.setattr(service, "_build_pdf_export", lambda cuts: b"fake-pdf-bytes")
+        upload_calls = []
         monkeypatch.setattr(
             service.storage,
             "upload_bytes",
-            lambda data, key, content_type: "https://pub-x.r2.dev/export-pdfs/fake.pdf",
+            lambda data, key, content_type, filename=None: upload_calls.append(filename)
+            or "https://pub-x.r2.dev/export-pdfs/fake.pdf",
         )
 
         storyboard_id = _create_completed_storyboard(session_factory)
@@ -103,6 +105,7 @@ class TestRunPdfExport:
         export = _load_export(session_factory, export_id)
         assert export.status == JobStatus.COMPLETED
         assert export.download_url == "https://pub-x.r2.dev/export-pdfs/fake.pdf"
+        assert upload_calls == [f"storyboard_{storyboard_id}.pdf"]
 
 
 class TestRunPdfExportFailure:

@@ -110,3 +110,31 @@ class TestUploadBytes:
             storage.upload_bytes(b"data", key="test.png", content_type="image/png")
 
         assert "AccessDenied" in exc_info.value.detail
+
+    def test_sets_content_disposition_when_filename_given(self, monkeypatch):
+        """filename을 주면(PDF/zip 등 다운로드 전용 파일) Content-Disposition: attachment로 업로드되는지"""
+        calls = []
+
+        class _FakeClient:
+            def put_object(self, **kwargs):
+                calls.append(kwargs)
+
+        monkeypatch.setattr(storage, "_get_client", lambda: _FakeClient())
+
+        storage.upload_bytes(b"data", key="export.pdf", content_type="application/pdf", filename="storyboard_1.pdf")
+
+        assert calls[0]["ContentDisposition"] == 'attachment; filename="storyboard_1.pdf"'
+
+    def test_no_content_disposition_when_filename_omitted(self, monkeypatch):
+        """filename 없으면(그리드/컷 이미지처럼 화면에 바로 렌더링해야 하는 파일) Content-Disposition을 안 붙이는지"""
+        calls = []
+
+        class _FakeClient:
+            def put_object(self, **kwargs):
+                calls.append(kwargs)
+
+        monkeypatch.setattr(storage, "_get_client", lambda: _FakeClient())
+
+        storage.upload_bytes(b"data", key="cuts/1.png", content_type="image/png")
+
+        assert "ContentDisposition" not in calls[0]
