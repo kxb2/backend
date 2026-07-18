@@ -185,6 +185,23 @@ class TestBuildImageExportZip:
             assert zip_file.read("grid.png") == b"grid-bytes"
             assert zip_file.read("cut_5.png") == b"cut-5-bytes"
 
+    def test_grid_entry_name_matches_actual_grid_extension(self, monkeypatch):
+        """그리드가 이제 JPEG로 저장 → 실제 URL 확장자 따라 grid.jpg로 들어가는지"""
+        cuts = [Cut(order_no=n, image_url=f"https://pub-x.r2.dev/cuts/{n}.png") for n in range(1, 10)]
+        contents_by_url = {f"https://pub-x.r2.dev/cuts/{n}.png": b"cut-bytes" for n in range(1, 10)}
+        contents_by_url["https://pub-x.r2.dev/grids/1.jpg"] = b"grid-jpeg-bytes"
+
+        monkeypatch.setattr(
+            "app.core.storage.httpx.get",
+            lambda url, **kwargs: Mock(content=contents_by_url[url]),
+        )
+
+        zip_bytes = _build_image_export_zip("https://pub-x.r2.dev/grids/1.jpg", cuts)
+
+        with ZipFile(BytesIO(zip_bytes)) as zip_file:
+            assert "grid.jpg" in zip_file.namelist()
+            assert zip_file.read("grid.jpg") == b"grid-jpeg-bytes"
+
 
 def _solid_png_bytes(color: tuple[int, int, int] = (200, 50, 50), size: tuple[int, int] = (40, 40)) -> bytes:
     from PIL import Image

@@ -30,6 +30,8 @@ MAX_PROMPT_ATTEMPTS = 3
 # 원래 2번이었는데 생각보다 프롬프트 제한수 잘 걸려서 3회로 늘림
 
 GRID_IMAGE_FOLDER = "grids"
+GRID_JPEG_QUALITY = 90
+# 크로마 서브샘플링 무압축 4:4:4 + jpeg 퀄 90
 
 # 미확정 사항: 통합 프롬프트에서 핵심 키워드 추출 확정되면
 # - SYSTEM_PROMPT에 키워드 출력 규칙 추가 → service.py에 키워드 파싱 로직 추가
@@ -177,9 +179,11 @@ def _download_image(url: str) -> Image.Image:
 
 
 def _build_grid_image(cut_image_urls: list[str]) -> bytes:
-    """order_no 순서로 정렬된 9개 이미지 URL을 병렬로 내려받아 3x3 그리드 1장(PNG)으로 합성.
+    """order_no 순서로 정렬된 9개 이미지 URL을 병렬로 내려받아 3x3 그리드 1장(JPEG)으로 합성.
 
     ㅡ executor.map은 입력 순서를 그대로 보존해서 반환하므로 order_no 순서가 깨지지 않음.
+    ㅡ PNG는 9장을 합치면 용량이 커서(약 20MB) JPEG로 저장
+      (해상도는 유지, 화질 손실 거의 없이 용량만 축소)
     """
     with ThreadPoolExecutor(max_workers=len(cut_image_urls)) as executor:
         images = list(executor.map(_download_image, cut_image_urls))
@@ -198,7 +202,7 @@ def _build_grid_image(cut_image_urls: list[str]) -> bytes:
         grid.paste(image, (col * tile_size[0], row * tile_size[1]))
 
     buffer = BytesIO()
-    grid.save(buffer, format="PNG")
+    grid.save(buffer, format="JPEG", quality=GRID_JPEG_QUALITY, subsampling=0)
     return buffer.getvalue()
 
 
@@ -266,7 +270,7 @@ def run_generation(storyboard_id: int) -> None:
         if all(cut.status == JobStatus.COMPLETED for cut in storyboard.cuts):
             grid_bytes = _build_grid_image([cut.image_url for cut in storyboard.cuts])
             generation.grid_image_url = storage.upload_image_bytes(
-                grid_bytes, content_type="image/png", folder=GRID_IMAGE_FOLDER
+                grid_bytes, content_type="image/jpeg", folder=GRID_IMAGE_FOLDER
             )
             generation.status = JobStatus.COMPLETED
         else:

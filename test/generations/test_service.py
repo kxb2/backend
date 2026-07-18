@@ -257,10 +257,11 @@ def _solid_png_bytes(color: tuple[int, int, int], size: tuple[int, int] = (2, 2)
 
 class TestBuildGridImage:
     def test_composes_nine_tiles_into_3x3_grid_in_order(self, monkeypatch):
-        """9개 타일을 순서대로 3x3으로 정확히 배치하는지"""
+        """9개 타일을 순서대로 3x3으로 정확히 배치하는지 (JPEG로 저장되니 픽셀은 완전 동일 X, 근사값만 확인)"""
         colors = [(i * 25, 0, 0) for i in range(9)]
+        tile_size = 16  # JPEG 블록 크기(8x8)보다 충분히 커야 압축 오차가 안정적으로 작음
         urls = [f"https://pub-x.r2.dev/cuts/{i}.png" for i in range(9)]
-        tile_bytes_by_url = {url: _solid_png_bytes(colors[i]) for i, url in enumerate(urls)}
+        tile_bytes_by_url = {url: _solid_png_bytes(colors[i], size=(tile_size, tile_size)) for i, url in enumerate(urls)}
 
         monkeypatch.setattr(
             "app.core.storage.httpx.get",
@@ -270,7 +271,11 @@ class TestBuildGridImage:
         grid_bytes = _build_grid_image(urls)
         grid = Image.open(BytesIO(grid_bytes))
 
-        assert grid.size == (6, 6)  # 2x2 타일 9개 -> 6x6
+        assert grid.format == "JPEG"
+        assert grid.size == (tile_size * 3, tile_size * 3)
         for index, color in enumerate(colors):
             row, col = divmod(index, 3)
-            assert grid.getpixel((col * 2, row * 2)) == color
+            # 타일 경계가 아니라 중앙을 샘플링(JPEG 블록 경계 번짐 영향 최소화)
+            center = (col * tile_size + tile_size // 2, row * tile_size + tile_size // 2)
+            got = grid.getpixel(center)
+            assert max(abs(a - b) for a, b in zip(got, color)) <= 10

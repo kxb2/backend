@@ -119,7 +119,7 @@ def _build_image_export_zip(grid_image_url: str, cuts: list[Cut]) -> bytes:
 
     ㅡ executor.map은 입력 순서를 그대로 보존해서 '입력 순서 = 결과 반환 순서'
     """
-    entries = [("grid.png", grid_image_url)] + [
+    entries = [(f"grid.{_extension_for_url(grid_image_url)}", grid_image_url)] + [
         (f"cut_{cut.order_no}.{_extension_for_url(cut.image_url)}", cut.image_url)
         for cut in sorted(cuts, key=lambda cut: cut.order_no)
     ]
