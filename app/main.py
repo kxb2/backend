@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
+from app.exports.router import router as exports_router
 from app.generations.router import router as generations_router
 from app.generations.service import recover_stuck_generations
 from app.routers import health
@@ -47,3 +48,4 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(storyboards_router)
 app.include_router(generations_router)
+app.include_router(exports_router)

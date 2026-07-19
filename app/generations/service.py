@@ -9,7 +9,6 @@ import re
 from concurrent.futures import ThreadPoolExecutor, wait
 from io import BytesIO
 
-import httpx
 from PIL import Image
 from sqlalchemy.orm import Session
 
@@ -29,9 +28,14 @@ logger = logging.getLogger(__name__)
 MAX_INTEGRATED_PROMPT_LENGTH = 3000
 MAX_PROMPT_ATTEMPTS = 3
 # 원래 2번이었는데 생각보다 프롬프트 제한수 잘 걸려서 3회로 늘림
-# (3000자 제한 계속 문제되면 3000자 한도 더 늘려야되나 생각중)
-GRID_IMAGE_FOLDER = "grids"
 
+GRID_IMAGE_FOLDER = "grids"
+GRID_JPEG_QUALITY = 90
+# 크로마 서브샘플링 무압축 4:4:4 + jpeg 퀄 90
+
+# 미확정 사항: 통합 프롬프트에서 핵심 키워드 추출 확정되면
+# - SYSTEM_PROMPT에 키워드 출력 규칙 추가 → service.py에 키워드 파싱 로직 추가
+#   → 키워드 컬럼 추가 → 응답 스키마 반영 (Claude 프롬프트 생성할때 출력포맷 확장)
 
 # ======= 1. Claude 응답 파싱/검증
 # Claude 출력의 "Shot 1: ...", "Shot 2: ..." 라벨을 순번과 함께 찾는 정규식
@@ -97,8 +101,12 @@ def apply_integrated_prompt(db: Session, storyboard: Storyboard, integrated_prom
 
 
 # ====== 2. 오케스트레이션(9컷 생성 전반 과정)이 쓰는 헬퍼 함수들
-def _generate_and_apply_prompt(db: Session, storyboard: Storyboard, prompt_adapter: PromptAdapter) -> bool:
-    """Claude 호출 + 분리/검증. 형식이 이상하면 MAX_PROMPT_ATTEMPTS까지 새로 생성해서 재시도, 최종 실패 시 False."""
+def _generate_and_apply_prompt(db: Session, storyboard: Storyboard, prompt_adapter: PromptAdapter) -> str | None:
+    """Claude 호출 + 분리/검증. 형식이 이상하면 MAX_PROMPT_ATTEMPTS까지 새로 생성해서 재시도.
+
+    성공하면 None, MAX_PROMPT_ATTEMPTS까지 다 실패하면 마지막 시도의 에러 메시지를 반환(generation.error_message에 기록용).
+    """
+    last_error: str | None = None
     for attempt in range(1, MAX_PROMPT_ATTEMPTS + 1):
         integrated_prompt: str | None = None  # 매 시도마다 리셋(이전 시도 값 남아있으면 로그 헷갈려서)
         try:
@@ -112,8 +120,9 @@ def _generate_and_apply_prompt(db: Session, storyboard: Storyboard, prompt_adapt
                 reference_image_urls=[ref.image_url for ref in storyboard.reference_images],
             )
             apply_integrated_prompt(db, storyboard, integrated_prompt)
-            return True
+            return None
         except (AIAdapterError, PromptValidationError) as exc:
+            last_error = str(exc)
             logger.warning("통합 프롬프트 생성/검증 실패(시도 %d/%d): %s", attempt, MAX_PROMPT_ATTEMPTS, exc)
             # generate_prompt까지는 성공하고 apply_integrated_prompt(검증)에서만 실패한 경우에만 원문 존재.
             # 이 원문을 봐야 어느 요소(Camera/Setting 등)가 길어서 넘겼는지 다음 프롬프트 튜닝에 참고 가능.
@@ -122,28 +131,32 @@ def _generate_and_apply_prompt(db: Session, storyboard: Storyboard, prompt_adapt
                     "실패한 통합 프롬프트 원문(시도 %d/%d):\n%s", attempt, MAX_PROMPT_ATTEMPTS, integrated_prompt
                 )
 
-    return False
+    return last_error
 
 
 def _generate_one_cut_image(
     image_adapter: ImageAdapter, cut_id: int, order_no: int, prompt_text: str, aspect_ratio: str | None
-) -> tuple[int, str | None]:
-    """스레드에서 실행, DB/ORM 접근 X(순수 값만 받음) - (cut_id, 이미지 URL) 또는 실패 시 (cut_id, None) 반환."""
+) -> tuple[int, str | None, str | None]:
+    """스레드에서 실행, DB/ORM 접근 X(순수 값만 받음) - (cut_id, 이미지 URL, 에러 메시지) 반환.
+
+    성공 시 에러 메시지는 None, 실패 시 이미지 URL이 None이고 에러 메시지가 채워짐(cut.error_message에 기록용).
+    """
     try:
         url = image_adapter.generate_image(prompt_text=prompt_text, aspect_ratio=aspect_ratio)
-        return cut_id, url
+        return cut_id, url, None
     except Exception as exc:  # noqa: BLE001 — R2 업로드 실패 등 AIAdapterError 밖의 에러도 이 컷만 실패 처리
         logger.error("컷 %d(id=%d) 이미지 생성 실패: %s", order_no, cut_id, exc)
-        return cut_id, None
+        return cut_id, None, str(exc)
 
 
 def _generate_cut_images(
     image_adapter: ImageAdapter, cuts: list[Cut], aspect_ratio: str | None
-) -> dict[int, str | None]:
+) -> dict[int, tuple[str | None, str | None]]:
     """위의 _generate_one_cut_image 함수를 9개 컷에 대해 스레드풀로 동시 실행.
 
     ㅡ cut의 필요한 값들은 스레드 넘기기 전에 메인 스레드에서 미리 뽑아둠
     ㅡ Session은 스레드 세이프하지 않아서, 살아있는 ORM 객체를 그대로 넘기면 X
+    ㅡ 반환값: {cut_id: (이미지 URL, 에러 메시지)}, 성공한 컷은 에러 메시지가 None
     """
     cut_inputs = [(cut.id, cut.order_no, cut.prompt_text) for cut in cuts]
 
@@ -154,18 +167,23 @@ def _generate_cut_images(
         ]
         wait(futures)
 
-    return dict(future.result() for future in futures)
+    return {cut_id: (url, error) for cut_id, url, error in (future.result() for future in futures)}
 
 
 def _download_image(url: str) -> Image.Image:
-    """스레드에서 실행, DB/ORM 접근 X(단순 HTTP 다운로드) - URL 하나를 내려받아 PIL Image로 반환."""
-    return Image.open(BytesIO(httpx.get(url, timeout=30.0).content))
+    """스레드에서 실행, DB/ORM 접근 X(HTTP 다운로드) - URL → PIL Image.
+
+    ㅡ storage.py의 R2 다운로드 재시도 로직 사용(download_bytes)
+    """
+    return Image.open(BytesIO(storage.download_bytes(url)))
 
 
 def _build_grid_image(cut_image_urls: list[str]) -> bytes:
-    """order_no 순서로 정렬된 9개 이미지 URL을 병렬로 내려받아 3x3 그리드 1장(PNG)으로 합성.
+    """order_no 순서로 정렬된 9개 이미지 URL을 병렬로 내려받아 3x3 그리드 1장(JPEG)으로 합성.
 
     ㅡ executor.map은 입력 순서를 그대로 보존해서 반환하므로 order_no 순서가 깨지지 않음.
+    ㅡ PNG는 9장을 합치면 용량이 커서(약 20MB) JPEG로 저장
+      (해상도는 유지, 화질 손실 거의 없이 용량만 축소)
     """
     with ThreadPoolExecutor(max_workers=len(cut_image_urls)) as executor:
         images = list(executor.map(_download_image, cut_image_urls))
@@ -184,7 +202,7 @@ def _build_grid_image(cut_image_urls: list[str]) -> bytes:
         grid.paste(image, (col * tile_size[0], row * tile_size[1]))
 
     buffer = BytesIO()
-    grid.save(buffer, format="PNG")
+    grid.save(buffer, format="JPEG", quality=GRID_JPEG_QUALITY, subsampling=0)
     return buffer.getvalue()
 
 
@@ -193,6 +211,7 @@ def get_generation(db: Session, generation_id: int) -> Generation | None:
     return db.get(Generation, generation_id)
 
 
+# 서버 떠있는 상태에서 백그라운드 태스크 멈출때(스레드 데드락)도 주기적으로 훑는거 추가 고려
 def recover_stuck_generations(db: Session) -> int:
     """서버 시작 시(배포로 인한 컨테이너 재시작 등) 호출
     
@@ -204,6 +223,7 @@ def recover_stuck_generations(db: Session) -> int:
     )
     for generation in stuck_generations:
         generation.status = JobStatus.FAILED
+        generation.error_message = "서버 재시작으로 중단된 작업"
         for cut in generation.storyboard.cuts:
             if cut.status != JobStatus.COMPLETED:
                 cut.status = JobStatus.FAILED
@@ -224,10 +244,12 @@ def run_generation(storyboard_id: int) -> None:
         generation.status = JobStatus.PROCESSING
         db.commit()
 
-        if not _generate_and_apply_prompt(db, storyboard, ClaudePromptAdapter()):
+        prompt_error = _generate_and_apply_prompt(db, storyboard, ClaudePromptAdapter())
+        if prompt_error is not None:
             for cut in storyboard.cuts:
                 cut.status = JobStatus.FAILED
             generation.status = JobStatus.FAILED
+            generation.error_message = prompt_error
             db.commit()
             return
 
@@ -239,21 +261,23 @@ def run_generation(storyboard_id: int) -> None:
         results = _generate_cut_images(image_adapter, storyboard.cuts, storyboard.aspect_ratio)
 
         for cut in storyboard.cuts:
-            image_url = results.get(cut.id)
+            image_url, error_message = results.get(cut.id, (None, None))
             cut.image_url = image_url
             cut.status = JobStatus.COMPLETED if image_url else JobStatus.FAILED
+            cut.error_message = error_message
         db.commit()
 
         if all(cut.status == JobStatus.COMPLETED for cut in storyboard.cuts):
             grid_bytes = _build_grid_image([cut.image_url for cut in storyboard.cuts])
             generation.grid_image_url = storage.upload_image_bytes(
-                grid_bytes, content_type="image/png", folder=GRID_IMAGE_FOLDER
+                grid_bytes, content_type="image/jpeg", folder=GRID_IMAGE_FOLDER
             )
             generation.status = JobStatus.COMPLETED
         else:
             generation.status = JobStatus.FAILED
+            generation.error_message = "일부 컷 이미지 생성 실패 (각 컷의 error_message 참고)"
         db.commit()
-    except Exception:
+    except Exception as exc:
         # 위에서 에러(그리드 다운로드 실패 등)가 나도 PROCESSING에 영원히 멈추지 않도록,
         # 최종적으로는 반드시 FAILED로 확정
         logger.exception("run_generation 실패 (storyboard_id=%d)", storyboard_id)
@@ -261,6 +285,7 @@ def run_generation(storyboard_id: int) -> None:
             db.rollback()
             storyboard = db.get(Storyboard, storyboard_id)
             storyboard.generation.status = JobStatus.FAILED
+            storyboard.generation.error_message = str(exc)
             for cut in storyboard.cuts:
                 if cut.status != JobStatus.COMPLETED:
                     cut.status = JobStatus.FAILED

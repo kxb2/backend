@@ -1,11 +1,13 @@
-"""Cloudflare R2(S3 호환) 스토리지 업로드"""
+"""Cloudflare R2(S3 호환) 스토리지 업로드/다운로드"""
 
 import logging
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, wait
 from functools import lru_cache
 
 import boto3
+import httpx
 from botocore.client import BaseClient
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import HTTPException, UploadFile
@@ -18,6 +20,10 @@ settings = get_settings()
 
 ALLOWED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
+
+# R2 다운로드(그리드 합성, export시) 오류 재시도 로직 추가
+MAX_DOWNLOAD_RETRIES = 2
+_RETRYABLE_DOWNLOAD_STATUS_CODES = {429, 500, 502, 503, 504}
 
 CONTENT_TYPE_EXT = {
     "image/jpeg": "jpg",
@@ -49,22 +55,65 @@ def _get_client() -> BaseClient:
     )
 
 
-def upload_bytes(data: bytes, key: str, content_type: str) -> str:
-    """바이트 데이터를 R2 버킷에 업로드하고 공개 URL을 반환."""
+def upload_bytes(data: bytes, key: str, content_type: str, *, filename: str | None = None) -> str:
+    """바이트 데이터를 R2 버킷에 업로드하고 공개 URL을 반환.
+
+    ㅡ PDF, zip: Content-Disposition: attachment로 저장 (다운로드 강제)
+      (그리드, 컷별 이미지는 화면 렌더링 때문에 냅둠)
+    """
     try:
         client = _get_client()
+        extra_args = {}
+        if filename is not None:
+            extra_args["ContentDisposition"] = f'attachment; filename="{filename}"'
+
         client.put_object(
             Bucket=settings.r2_bucket_name,
             Key=key,
             Body=data,
             ContentType=content_type,
+            **extra_args,
         )
         logger.info("R2 업로드 완료: key=%s", key)
     except (BotoCoreError, ClientError) as e:
         logger.error("R2 업로드 실패: key=%s err=%s", key, e)
-        raise HTTPException(status_code=503, detail="파일 업로드에 실패했습니다.") from e
+        raise HTTPException(status_code=503, detail=f"파일 업로드에 실패했습니다: {e}") from e
 
     return f"{settings.r2_public_url}/{key}"
+
+
+def download_bytes(url: str, *, timeout: float = 30.0) -> bytes:
+    """R2에 올라간 파일을 URL로 다시 읽어옴(그리드 합성, Export zip 등에서 공용 사용).
+
+    ㅡ 타임아웃/429/5xx처럼 일시적인 실패만 지수 백오프로 재시도.
+    ㅡ 403/404 등 재시도해도 성공 못하는 응답은 즉시 예외 전파(raise_for_status).
+    """
+    attempt = 0
+    while True:
+        try:
+            response = httpx.get(url, timeout=timeout)
+            response.raise_for_status()
+            return response.content
+        except httpx.TimeoutException as exc:
+            retryable, wait_exc = True, exc
+        except httpx.HTTPStatusError as exc:
+            retryable = exc.response.status_code in _RETRYABLE_DOWNLOAD_STATUS_CODES
+            wait_exc = exc
+
+        if not retryable or attempt >= MAX_DOWNLOAD_RETRIES:
+            raise wait_exc
+
+        delay = 2**attempt
+        logger.warning(
+            "R2 다운로드 실패(%s), %ds 후 재시도 (%d/%d): %s",
+            url,
+            delay,
+            attempt + 1,
+            MAX_DOWNLOAD_RETRIES,
+            wait_exc,
+        )
+        time.sleep(delay)
+        attempt += 1
 
 
 def delete_file(url: str) -> None:

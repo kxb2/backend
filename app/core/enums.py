@@ -15,7 +15,7 @@ class JobStatus(StrEnum):
 
 class ImageModel(StrEnum):
     GPT_IMAGE = "gpt_image"
-    GEMINI_3_5_FLASH_IMAGE = "gemini_3_5_flash_image"
+    GEMINI_3_1_FLASH_IMAGE = "gemini_3_1_flash_image"
 
 
 class Genre(StrEnum):
@@ -24,3 +24,8 @@ class Genre(StrEnum):
     ROMANCE = "로맨스"
     THRILLER = "스릴러"
     COMEDY = "코미디"
+
+
+class ExportType(StrEnum):
+    PDF = "pdf"
+    IMAGE = "image"

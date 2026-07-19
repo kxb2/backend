@@ -35,8 +35,10 @@ class Storyboard(Base):
     reference_images: Mapped[list["ReferenceImage"]] = relationship(
         back_populates="storyboard", cascade="all, delete-orphan"
     )
-    cuts: Mapped[list["Cut"]] = relationship(back_populates="storyboard", order_by="Cut.order_no")
-    generation: Mapped["Generation"] = relationship(back_populates="storyboard")
+    cuts: Mapped[list["Cut"]] = relationship(
+        back_populates="storyboard", order_by="Cut.order_no", passive_deletes=True
+    )
+    generation: Mapped["Generation"] = relationship(back_populates="storyboard", passive_deletes=True)
 
 
 class ReferenceImage(Base):
