@@ -19,3 +19,4 @@ class ExportDetailResponse(CamelModel):
     type: ExportType
     status: JobStatus
     download_url: str | None
+    error_message: str | None = None

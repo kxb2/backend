@@ -51,6 +51,25 @@ class GenerationNotCompleted(Exception):
         super().__init__(message)
 
 
+class ExportInProgress(Exception):
+    """같은 storyboard에 이미 PENDING/PROCESSING Export가 있는 상태에서 새로 요청한 경우"""
+
+    def __init__(self, message: str = "이미 처리 중인 Export가 있습니다. 완료 후 다시 시도해 주세요."):
+        super().__init__(message)
+
+
+def _raise_if_export_in_progress(db: Session, storyboard_id: int) -> None:
+    """같은 storyboard에 PENDING/PROCESSING Export가 이미 있으면 중복 생성 차단
+    (연타/중복 클릭으로 같은 storyboard의 cuts/generation을 동시에 읽는 백그라운드 태스크가 여러 개 뜨는 것 방지)."""
+    exists = (
+        db.query(Export.id)
+        .filter(Export.storyboard_id == storyboard_id, Export.status.in_([JobStatus.PENDING, JobStatus.PROCESSING]))
+        .first()
+    )
+    if exists is not None:
+        raise ExportInProgress()
+
+
 def _get_exportable_storyboard(db: Session, storyboard_id: int) -> Storyboard:
     """Export 가능한(9컷 생성이 완료된) storyboard를 반환. 없거나 미완료면 예외."""
     storyboard = db.get(Storyboard, storyboard_id)
@@ -79,6 +98,7 @@ def _get_exportable_storyboard(db: Session, storyboard_id: int) -> Storyboard:
 def create_image_export(db: Session, storyboard_id: int, *, include_individual_cuts: bool) -> Export:
     """이미지 Export job 등록 (실제 처리는 background task: run_image_export가 수행)"""
     storyboard = _get_exportable_storyboard(db, storyboard_id)
+    _raise_if_export_in_progress(db, storyboard_id)
 
     export = Export(
         storyboard_id=storyboard.id,
@@ -95,6 +115,7 @@ def create_image_export(db: Session, storyboard_id: int, *, include_individual_c
 def create_pdf_export(db: Session, storyboard_id: int) -> Export:
     """PDF Export job 등록 (실제 처리는 background task: run_pdf_export가 수행)"""
     storyboard = _get_exportable_storyboard(db, storyboard_id)
+    _raise_if_export_in_progress(db, storyboard_id)
 
     export = Export(storyboard_id=storyboard.id, type=ExportType.PDF, status=JobStatus.PENDING)
     db.add(export)

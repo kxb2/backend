@@ -9,6 +9,7 @@ from pypdf import PdfReader
 from app.core.enums import ExportType, JobStatus
 from app.exports.models import Export
 from app.exports.service import (
+    ExportInProgress,
     GenerationNotCompleted,
     StoryboardNotFound,
     _build_image_export_zip,
@@ -42,6 +43,7 @@ class TestCreateImageExport:
         """정상 케이스: Export row가 IMAGE 타입/PENDING 상태로 생성되고 commit되는지"""
         db = Mock()
         db.get.return_value = _storyboard_with_completed_generation()
+        db.query.return_value.filter.return_value.first.return_value = None  # 처리 중인 Export 없음
 
         export = create_image_export(db, 1, include_individual_cuts=True)
 
@@ -108,6 +110,7 @@ class TestCreatePdfExport:
         """정상 케이스: Export row가 PDF 타입/PENDING 상태로 생성되고 commit되는지"""
         db = Mock()
         db.get.return_value = _storyboard_with_completed_generation()
+        db.query.return_value.filter.return_value.first.return_value = None  # 처리 중인 Export 없음
 
         export = create_pdf_export(db, 1)
 
@@ -147,6 +150,30 @@ class TestCreatePdfExport:
         db.get.return_value = storyboard
 
         with pytest.raises(GenerationNotCompleted):
+            create_pdf_export(db, 1)
+
+        db.add.assert_not_called()
+
+
+class TestExportInProgressGuard:
+    def test_image_export_blocked_when_export_already_in_progress(self):
+        """같은 storyboard에 PENDING/PROCESSING Export가 이미 있으면 새 이미지 Export 요청을 막는지"""
+        db = Mock()
+        db.get.return_value = _storyboard_with_completed_generation()
+        db.query.return_value.filter.return_value.first.return_value = Export(id=99)  # 이미 처리 중인 export
+
+        with pytest.raises(ExportInProgress):
+            create_image_export(db, 1, include_individual_cuts=False)
+
+        db.add.assert_not_called()
+
+    def test_pdf_export_blocked_when_export_already_in_progress(self):
+        """같은 storyboard에 PENDING/PROCESSING Export가 이미 있으면 새 PDF Export 요청도 막는지"""
+        db = Mock()
+        db.get.return_value = _storyboard_with_completed_generation()
+        db.query.return_value.filter.return_value.first.return_value = Export(id=99)  # 이미 처리 중인 export
+
+        with pytest.raises(ExportInProgress):
             create_pdf_export(db, 1)
 
         db.add.assert_not_called()

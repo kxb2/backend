@@ -119,6 +119,8 @@ def create_image_export(
         raise HTTPException(status_code=404, detail="storyboard not found") from exc
     except exports_service.GenerationNotCompleted as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except exports_service.ExportInProgress as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     background_tasks.add_task(run_image_export, export.id)
 
@@ -139,6 +141,8 @@ def create_pdf_export(
     except exports_service.StoryboardNotFound as exc:
         raise HTTPException(status_code=404, detail="storyboard not found") from exc
     except exports_service.GenerationNotCompleted as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except exports_service.ExportInProgress as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     background_tasks.add_task(run_pdf_export, export.id)
