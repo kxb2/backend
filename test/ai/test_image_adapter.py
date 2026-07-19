@@ -277,5 +277,5 @@ class TestGetImageAdapter:
         assert isinstance(get_image_adapter(ImageModel.GPT_IMAGE), GptImageAdapter)
 
     def test_returns_gemini_adapter_for_gemini(self):
-        """image_model: GEMINI_3_5_FLASH_IMAGE → GeminiImageAdapter 반환하는지"""
-        assert isinstance(get_image_adapter(ImageModel.GEMINI_3_5_FLASH_IMAGE), GeminiImageAdapter)
+        """image_model: GEMINI_3_1_FLASH_IMAGE → GeminiImageAdapter 반환하는지"""
+        assert isinstance(get_image_adapter(ImageModel.GEMINI_3_1_FLASH_IMAGE), GeminiImageAdapter)

@@ -7,7 +7,7 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from app.db.session import get_db
 from app.exports import service as exports_service
 from app.exports.schemas import ExportCreateResponse, ImageExportRequest
-from app.exports.service import run_image_export
+from app.exports.service import run_image_export, run_pdf_export
 from app.generations.service import run_generation
 from app.storyboards import service
 from app.storyboards.schemas import (
@@ -81,6 +81,15 @@ def get_storyboard(storyboard_id: int, db: Session = Depends(get_db)):
     return storyboard
 
 
+@router.delete("/{storyboard_id}", status_code=204)
+def delete_storyboard(storyboard_id: int, db: Session = Depends(get_db)) -> None:
+    """스토리보드 삭제(개발용으로 미리) — 관련 R2 파일(레퍼런스, 컷, 그리드, export)도 정리"""
+    try:
+        service.delete_storyboard(db, storyboard_id)
+    except service.StoryboardNotFound as exc:
+        raise HTTPException(status_code=404, detail="storyboard not found") from exc
+
+
 @router.get("/{storyboard_id}/prompt", response_model=StoryboardPromptResponse)
 def get_storyboard_prompt(storyboard_id: int, db: Session = Depends(get_db)) -> StoryboardPromptResponse:
     """스토리보드 통합 프롬프트 조회"""
@@ -110,7 +119,32 @@ def create_image_export(
         raise HTTPException(status_code=404, detail="storyboard not found") from exc
     except exports_service.GenerationNotCompleted as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except exports_service.ExportInProgress as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     background_tasks.add_task(run_image_export, export.id)
+
+    return ExportCreateResponse(export_id=export.id, status=export.status)
+
+
+@router.post(
+    "/{storyboard_id}/exports/pdf", response_model=ExportCreateResponse, status_code=201
+)
+def create_pdf_export(
+    storyboard_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> ExportCreateResponse:
+    """PDF Export 요청 (9컷 이미지 + 샷별 프롬프트가 담긴 PDF 생성)"""
+    try:
+        export = exports_service.create_pdf_export(db, storyboard_id)
+    except exports_service.StoryboardNotFound as exc:
+        raise HTTPException(status_code=404, detail="storyboard not found") from exc
+    except exports_service.GenerationNotCompleted as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except exports_service.ExportInProgress as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    background_tasks.add_task(run_pdf_export, export.id)
 
     return ExportCreateResponse(export_id=export.id, status=export.status)

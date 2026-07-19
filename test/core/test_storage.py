@@ -1,9 +1,11 @@
 import httpx
 import pytest
+from botocore.exceptions import ClientError
+from fastapi import HTTPException
 
 from app.core import storage
 
-"""R2 관련 download_bytes의 재시도 동작 테스트"""
+"""R2 관련 download_bytes의 재시도 동작, upload_bytes 에러 메시지 테스트"""
 
 @pytest.fixture(autouse=True)
 def _no_sleep(monkeypatch):
@@ -90,3 +92,49 @@ class TestDownloadBytes:
             storage.download_bytes("https://pub-x.r2.dev/test.png")
 
         assert len(calls) == 1 + storage.MAX_DOWNLOAD_RETRIES
+
+
+class TestUploadBytes:
+    def test_includes_underlying_error_detail_on_failure(self, monkeypatch):
+        """R2 업로드 실패 시 HTTPException detail에 고정 문구뿐 아니라 원본 에러 내용까지 포함되는지
+        (error_message로 저장됐을 때 실제 원인을 알 수 있어야 함)"""
+        error = ClientError({"Error": {"Code": "AccessDenied", "Message": "denied"}}, "PutObject")
+
+        class _FakeClient:
+            def put_object(self, **kwargs):
+                raise error
+
+        monkeypatch.setattr(storage, "_get_client", lambda: _FakeClient())
+
+        with pytest.raises(HTTPException) as exc_info:
+            storage.upload_bytes(b"data", key="test.png", content_type="image/png")
+
+        assert "AccessDenied" in exc_info.value.detail
+
+    def test_sets_content_disposition_when_filename_given(self, monkeypatch):
+        """filename을 주면(PDF/zip 등 다운로드 전용 파일) Content-Disposition: attachment로 업로드되는지"""
+        calls = []
+
+        class _FakeClient:
+            def put_object(self, **kwargs):
+                calls.append(kwargs)
+
+        monkeypatch.setattr(storage, "_get_client", lambda: _FakeClient())
+
+        storage.upload_bytes(b"data", key="export.pdf", content_type="application/pdf", filename="storyboard_1.pdf")
+
+        assert calls[0]["ContentDisposition"] == 'attachment; filename="storyboard_1.pdf"'
+
+    def test_no_content_disposition_when_filename_omitted(self, monkeypatch):
+        """filename 없으면(그리드/컷 이미지처럼 화면에 바로 렌더링해야 하는 파일) Content-Disposition을 안 붙이는지"""
+        calls = []
+
+        class _FakeClient:
+            def put_object(self, **kwargs):
+                calls.append(kwargs)
+
+        monkeypatch.setattr(storage, "_get_client", lambda: _FakeClient())
+
+        storage.upload_bytes(b"data", key="cuts/1.png", content_type="image/png")
+
+        assert "ContentDisposition" not in calls[0]

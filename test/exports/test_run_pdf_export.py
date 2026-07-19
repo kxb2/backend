@@ -1,8 +1,8 @@
-"""run_image_export 오케스트레이션 자체(커밋 순서, 실패 처리, catch-all) 테스트.
+"""run_pdf_export 오케스트레이션 자체(커밋 순서, 실패 처리, catch-all) 테스트.
 
-test_service.py는 순수 헬퍼 함수만 다루고 run_image_export 본체는 다루지 않아서,
+test_service.py는 순수 헬퍼 함수(_build_pdf_export)만 다루고 run_pdf_export 본체는 다루지 않아서,
 실제 SQLite 세션으로 커밋/롤백까지 포함한 전체 흐름을 검증하기 위해 파일을 분리함
-(test/generations/test_run_generation.py와 동일한 패턴).
+(test/exports/test_run_image_export.py와 동일한 패턴).
 """
 
 import pytest
@@ -32,7 +32,7 @@ def _patch_session_local(monkeypatch, session_factory):
     monkeypatch.setattr(service, "SessionLocal", session_factory)
 
 
-def _create_completed_storyboard(session_factory, *, grid_image_url: str = "https://pub-x.r2.dev/grids/1.png") -> int:
+def _create_completed_storyboard(session_factory) -> int:
     """9컷 생성까지 이미 완료된 스토리보드를 흉내냄"""
     db = session_factory()
     try:
@@ -42,7 +42,13 @@ def _create_completed_storyboard(session_factory, *, grid_image_url: str = "http
         db.add(storyboard)
         db.flush()
 
-        db.add(Generation(storyboard_id=storyboard.id, status=JobStatus.COMPLETED, grid_image_url=grid_image_url))
+        db.add(
+            Generation(
+                storyboard_id=storyboard.id,
+                status=JobStatus.COMPLETED,
+                grid_image_url="https://pub-x.r2.dev/grids/1.png",
+            )
+        )
         for order_no in range(1, 10):
             db.add(
                 Cut(
@@ -50,6 +56,7 @@ def _create_completed_storyboard(session_factory, *, grid_image_url: str = "http
                     order_no=order_no,
                     status=JobStatus.COMPLETED,
                     image_url=f"https://pub-x.r2.dev/cuts/{order_no}.png",
+                    prompt_text=f"description for shot {order_no}",
                 )
             )
 
@@ -59,15 +66,10 @@ def _create_completed_storyboard(session_factory, *, grid_image_url: str = "http
         db.close()
 
 
-def _create_export(session_factory, storyboard_id: int, *, include_individual_cuts: bool) -> int:
+def _create_export(session_factory, storyboard_id: int) -> int:
     db = session_factory()
     try:
-        export = Export(
-            storyboard_id=storyboard_id,
-            type=ExportType.IMAGE,
-            include_individual_cuts=include_individual_cuts,
-            status=JobStatus.PENDING,
-        )
+        export = Export(storyboard_id=storyboard_id, type=ExportType.PDF, status=JobStatus.PENDING)
         db.add(export)
         db.commit()
         return export.id
@@ -83,61 +85,44 @@ def _load_export(session_factory, export_id: int) -> Export:
         db.close()
 
 
-class TestRunImageExportDefault:
-    def test_reuses_grid_image_url_without_new_upload(self, monkeypatch, session_factory):
-        """옵션 미체크: 새 업로드 없이 기존 grid_image_url을 그대로 download_url에 반영"""
-        upload_calls = []
-        monkeypatch.setattr(service.storage, "upload_bytes", lambda *a, **k: upload_calls.append((a, k)))
-
-        storyboard_id = _create_completed_storyboard(session_factory)
-        export_id = _create_export(session_factory, storyboard_id, include_individual_cuts=False)
-
-        service.run_image_export(export_id)
-
-        export = _load_export(session_factory, export_id)
-        assert export.status == JobStatus.COMPLETED
-        assert export.download_url == "https://pub-x.r2.dev/grids/1.png"
-        assert upload_calls == []
-
-
-class TestRunImageExportWithIndividualCuts:
-    def test_builds_zip_and_uploads_it(self, monkeypatch, session_factory):
-        """옵션 체크: zip을 새로 만들어 업로드하고, 그 URL이 download_url로 반영되는지"""
-        monkeypatch.setattr(service, "_build_image_export_zip", lambda grid_url, cuts: b"fake-zip-bytes")
+class TestRunPdfExport:
+    def test_builds_pdf_and_uploads_it(self, monkeypatch, session_factory):
+        """PDF를 새로 만들어 업로드하고, 그 URL이 download_url로 반영되는지"""
+        monkeypatch.setattr(service, "_build_pdf_export", lambda cuts: b"fake-pdf-bytes")
         upload_calls = []
         monkeypatch.setattr(
             service.storage,
             "upload_bytes",
             lambda data, key, content_type, filename=None: upload_calls.append(filename)
-            or "https://pub-x.r2.dev/export-images/fake.zip",
+            or "https://pub-x.r2.dev/export-pdfs/fake.pdf",
         )
 
         storyboard_id = _create_completed_storyboard(session_factory)
-        export_id = _create_export(session_factory, storyboard_id, include_individual_cuts=True)
+        export_id = _create_export(session_factory, storyboard_id)
 
-        service.run_image_export(export_id)
+        service.run_pdf_export(export_id)
 
         export = _load_export(session_factory, export_id)
         assert export.status == JobStatus.COMPLETED
-        assert export.download_url == "https://pub-x.r2.dev/export-images/fake.zip"
-        assert upload_calls == [f"storyboard_{storyboard_id}_images.zip"]
+        assert export.download_url == "https://pub-x.r2.dev/export-pdfs/fake.pdf"
+        assert upload_calls == [f"storyboard_{storyboard_id}.pdf"]
 
 
-class TestRunImageExportFailure:
+class TestRunPdfExportFailure:
     def test_catch_all_marks_export_failed(self, monkeypatch, session_factory):
         """예상 못한 예외가 나도 PROCESSING에 멈추지 않고 최종적으로 FAILED로 확정되는지"""
 
-        def _boom(grid_url, cuts):
-            raise RuntimeError("download failed")
+        def _boom(cuts):
+            raise RuntimeError("pdf build failed")
 
-        monkeypatch.setattr(service, "_build_image_export_zip", _boom)
+        monkeypatch.setattr(service, "_build_pdf_export", _boom)
 
         storyboard_id = _create_completed_storyboard(session_factory)
-        export_id = _create_export(session_factory, storyboard_id, include_individual_cuts=True)
+        export_id = _create_export(session_factory, storyboard_id)
 
-        service.run_image_export(export_id)
+        service.run_pdf_export(export_id)
 
         export = _load_export(session_factory, export_id)
         assert export.status == JobStatus.FAILED
         assert export.download_url is None
-        assert export.error_message == "download failed"
+        assert export.error_message == "pdf build failed"

@@ -126,6 +126,7 @@ class TestRunGenerationPromptFailure:
 
         generation, cuts = _load(session_factory, storyboard_id)
         assert generation.status == JobStatus.FAILED
+        assert generation.error_message is not None
         assert all(cut.status == JobStatus.FAILED for cut in cuts)
         assert image_adapter.calls == 0
 
@@ -149,6 +150,7 @@ class TestRunGenerationUnexpectedException:
 
         generation, cuts = _load(session_factory, storyboard_id)
         assert generation.status == JobStatus.FAILED
+        assert generation.error_message == "grid build failed"
         assert all(cut.status == JobStatus.COMPLETED for cut in cuts)
         assert all(cut.image_url for cut in cuts)
 
@@ -176,6 +178,7 @@ class TestRecoverStuckGenerations:
 
             stuck_generation, stuck_cuts = _load(session_factory, stuck.id)
             assert stuck_generation.status == JobStatus.FAILED
+            assert stuck_generation.error_message is not None
             assert all(cut.status == JobStatus.FAILED for cut in stuck_cuts)
 
             done_generation, done_cuts = _load(session_factory, done.id)
