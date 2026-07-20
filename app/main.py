@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.canvases.router import router as canvases_router
 from app.core.config import get_settings
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
@@ -49,3 +50,4 @@ app.include_router(health.router)
 app.include_router(storyboards_router)
 app.include_router(generations_router)
 app.include_router(exports_router)
+app.include_router(canvases_router)
