@@ -7,10 +7,10 @@ from PIL import Image
 from app.ai.exceptions import AIAdapterError
 from app.generations.service import (
     PromptValidationError,
-    _build_grid_image,
     _generate_and_apply_prompt,
     _generate_cut_images,
     apply_integrated_prompt,
+    build_grid_image,
     split_shots,
     validate_prompt_length,
 )
@@ -268,7 +268,7 @@ class TestBuildGridImage:
             lambda url, **kwargs: Mock(content=tile_bytes_by_url[url]),
         )
 
-        grid_bytes = _build_grid_image(urls)
+        grid_bytes = build_grid_image(urls)
         grid = Image.open(BytesIO(grid_bytes))
 
         assert grid.format == "JPEG"

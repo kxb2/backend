@@ -44,6 +44,7 @@ class TestCreateImageExport:
         db = Mock()
         db.get.return_value = _storyboard_with_completed_generation()
         db.query.return_value.filter.return_value.first.return_value = None  # 처리 중인 Export 없음
+        db.query.return_value.join.return_value.filter.return_value.first.return_value = None  # 진행 중인 재생성 없음
 
         export = create_image_export(db, 1, include_individual_cuts=True)
 
@@ -111,6 +112,7 @@ class TestCreatePdfExport:
         db = Mock()
         db.get.return_value = _storyboard_with_completed_generation()
         db.query.return_value.filter.return_value.first.return_value = None  # 처리 중인 Export 없음
+        db.query.return_value.join.return_value.filter.return_value.first.return_value = None  # 진행 중인 재생성 없음
 
         export = create_pdf_export(db, 1)
 

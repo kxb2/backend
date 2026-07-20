@@ -95,7 +95,7 @@ class TestRunGenerationHappyPath:
     def test_completes_generation_and_all_cuts_with_grid_image(self, monkeypatch, session_factory):
         monkeypatch.setattr(service, "ClaudePromptAdapter", _FakePromptAdapter)
         monkeypatch.setattr(service, "get_image_adapter", lambda image_model: _FakeImageAdapter())
-        monkeypatch.setattr(service, "_build_grid_image", lambda urls: b"fake-grid-bytes")
+        monkeypatch.setattr(service, "build_grid_image", lambda urls: b"fake-grid-bytes")
         monkeypatch.setattr(
             service.storage,
             "upload_image_bytes",
@@ -143,7 +143,7 @@ class TestRunGenerationUnexpectedException:
         def _boom(urls):
             raise RuntimeError("grid build failed")
 
-        monkeypatch.setattr(service, "_build_grid_image", _boom)
+        monkeypatch.setattr(service, "build_grid_image", _boom)
 
         storyboard_id = _create_storyboard(session_factory)
         service.run_generation(storyboard_id)
