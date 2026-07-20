@@ -41,7 +41,7 @@
 3. 9컷 그리드 이미지 — Generation.grid_image_url (개별 컷 미포함 이미지 Export 기본값과 동일)
 4. PDF Export 문서 — Export.download_url (type=pdf, 항상 신규)
 5. 이미지 Export 묶음 파일 — Export.download_url (type=image, "개별 컷 포함" 옵션 켰을 때만 존재하는 신규 zip)
-6. 캔버스에 첨부되는 이미지 및 동영상 — 확정: 영상도 presigned URL 아니고 이미지와 동일하게 백엔드 프록시 업로드(일단 50MB 캡) `/canvases/{canvasId}/attachments`
+6. 캔버스에 첨부되는 이미지/ 동영상/ 영상썸네일 — 확정: 영상도 presigned URL 아니고 이미지와 동일하게 백엔드 프록시 업로드(일단 50MB 캡) `/canvases/{canvasId}/attachments`
 
 
 ## 백엔드 담당 작업 목록 (PRD / 백로그.md 추출)

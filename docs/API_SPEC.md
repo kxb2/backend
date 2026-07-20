@@ -23,7 +23,8 @@
 | 캔버스 목록조회 | GET | - | `/canvases` | 캔버스 전체 목록을 요약 정보(id, storyboardId, createdAt, updatedAt)로 조회합니다. |
 | 캔버스 조회 | GET | canvasId | `/canvases/{canvasId}` | 생성된 컷과 프롬프트의 캔버스 배치 정보를 조회합니다. |
 | 캔버스 저장 | PUT | canvasId | `/canvases/{canvasId}` | 캔버스 요소(elements)·연결(connections) 전체를 요청 내용으로 교체 저장합니다(전체 교체 방식). |
-| 캔버스 이미지/영상 업로드 | POST | canvasId | `/canvases/{canvasId}/attachments` | 이미지/영상 파일을 R2에 업로드하고 url만 반환합니다(요소로 저장하려면 이후 캔버스 저장 API에 포함해서 호출). 응답: `{ contentUrl, thumbnailUrl, type }` |
+| 캔버스 이미지/영상 업로드 | POST | canvasId | `/canvases/{canvasId}/attachments` | 이미지/영상 파일을 R2에 업로드하고 url을 반환합니다(영상은 프론트가 만든 썸네일 이미지도 같이 보내면 별도로 R2 업로드 후 함께 반환. 요소로 저장하려면 이후 캔버스 저장 API에 포함해서 호출). 응답: `{ contentUrl, thumbnailUrl, type }` |
+| 캔버스 삭제 | DELETE | canvasId | `/canvases/{canvasId}` | 캔버스를 삭제합니다. 캔버스가 소유한 첨부 이미지/영상(R2)도 함께 정리됩니다. |
 | PDF Export | POST | storyboardId | `/storyboards/{storyboardId}/exports/pdf` | 이미지와 프롬프트를 PDF로 생성합니다. 응답: `{ exportId, status: "pending" }` |
 | 이미지 Export | POST | storyboardId | `/storyboards/{storyboardId}/exports/image` | 3×3 그리드 이미지 1장을 Export합니다. 옵션으로 개별 컷 이미지도 포함할 수 있습니다. 응답: `{ exportId, status: "pending" }` |
 | Export 결과 조회 | GET | exportId | `/exports/{exportId}` | PDF 또는 이미지 Export 완료 여부(status)와 다운로드 링크를 조회합니다. |
