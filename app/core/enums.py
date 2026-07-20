@@ -29,3 +29,10 @@ class Genre(StrEnum):
 class ExportType(StrEnum):
     PDF = "pdf"
     IMAGE = "image"
+
+
+class CanvasElementType(StrEnum):
+    IMAGE = "image"
+    VIDEO = "video"
+    MEMO = "memo"
+    SECTION = "section"

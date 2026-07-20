@@ -269,7 +269,7 @@ def _build_pdf_export(cuts: list[Cut]) -> bytes:
     table.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),  # 컷별 회색구분선(필요없어지면 여기수정하면됨)
         ("LEFTPADDING", (0, 0), (-1, -1), 4),
         ("RIGHTPADDING", (0, 0), (-1, -1), 4),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
