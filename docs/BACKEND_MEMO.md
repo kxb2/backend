@@ -41,7 +41,7 @@
 3. 9컷 그리드 이미지 — Generation.grid_image_url (개별 컷 미포함 이미지 Export 기본값과 동일)
 4. PDF Export 문서 — Export.download_url (type=pdf, 항상 신규)
 5. 이미지 Export 묶음 파일 — Export.download_url (type=image, "개별 컷 포함" 옵션 켰을 때만 존재하는 신규 zip)
-6. 캔버스에 첨부되는 이미지 및 동영상 (추후 캔버스 작업 진행시 확정사항)
+6. 캔버스에 첨부되는 이미지 및 동영상 — 확정: 영상도 presigned URL 아니고 이미지와 동일하게 백엔드 프록시 업로드(일단 50MB 캡) `/canvases/{canvasId}/attachments`
 
 
 ## 백엔드 담당 작업 목록 (PRD / 백로그.md 추출)
@@ -71,8 +71,10 @@
 - [ ] 내보내기 결과 확인 — 완료 여부·다운로드 링크 조회 - 2순위
 
 ### 캔버스
-- [ ] 캔버스 조회 — 저장된 컷 배치 위치 불러오기
-- [ ] 캔버스 배치 저장 — 각 컷 위치(X,Y) 저장
+- [x] 캔버스 생성/개별조회/목록조회/저장 API 구현 (`POST,GET /canvases`, `GET,PUT /canvases/{id}`)
+- [x] 캔버스 배치 저장 — 각 요소 위치(X,Y) + 연결/섹션까지 전체 교체 저장
+- [x] 캔버스 첨부(이미지/영상) 업로드 API (`POST /canvases/{id}/attachments`)
+- [ ] 캔버스 작성하다 저장을 안하게 되는 케이스 관련(r2 고아) 문제: 프론트분들이 이미지/영상 첨부하자마자 업로드 api를 연결하는지 아니면 캔버스저장버튼을 눌렀을때 업로드 api를 연결하는지에 따라 내 작업이 달라짐(전자면 CanvasPendingAttachment 작은추적테이블+24시간정리스윕/ 후자면 나 할거없음)
 
 ### 유저/인증 - 후순위
 - [ ] users 테이블 설계 (이메일, 비밀번호 해시 등)
