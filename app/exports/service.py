@@ -2,7 +2,7 @@
 
 ㅡ 이미지 Export, 옵션 미체크(기본): 이미 있는 Generation.grid_image_url을 그대로 재사용
 ㅡ 이미지 Export, "컷 개별 포함" 옵션 체크: 그리드 1장 + 컷 9장을 zip 하나로 묶어 R2에 신규 업로드
-ㅡ PDF Export: 컷마다 이미지 1장 + Shot 번호/프롬프트를 한 페이지씩 구성(F-05)해서 PDF 1개로 R2에 신규 업로드
+ㅡ PDF Export: 1페이지에 9컷을 그리드로(컷 비율에 맞춰 세로/가로 방향 결정) PDF 1개 R2에 신규 업로드
 """
 
 import logging
@@ -13,11 +13,12 @@ from io import BytesIO
 from xml.sax.saxutils import escape
 
 from PIL import Image as PILImage
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.platypus import Image as RLImage
-from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy.orm import Session
 
 from app.core import storage
@@ -34,11 +35,14 @@ logger = logging.getLogger(__name__)
 EXPORT_ZIP_FOLDER = "export-images"
 EXPORT_PDF_FOLDER = "export-pdfs"
 
-_PDF_MARGIN = 2 * cm
-_PDF_MAX_IMAGE_WIDTH = A4[0] - 2 * _PDF_MARGIN
-_PDF_MAX_IMAGE_HEIGHT = A4[1] * 0.55
-_PDF_MAX_IMAGE_PIXELS = 1600  # 해상도 캡: 원본이 이보다 크면 축소
+_PDF_MAX_IMAGE_PIXELS = 1000  # 해상도 캡: 원본이 이보다 크면 축소
 _PDF_JPEG_QUALITY = 85        # pdf 용량 적당하게 줄이려고 jpeg로 재인코딩
+
+_PDF_GRID_MARGIN = 1 * cm
+_PDF_GRID_SIZE = 3  # 3x3 그리드
+_PDF_GRID_IMAGE_HEIGHT_RATIO = 0.62  # 칸 안에서 이미지 최대 높이 비율(나머지는 텍스트 몫)
+_PDF_GRID_SHOT_STYLE = ParagraphStyle("pdfGridShot", fontName="Helvetica-Bold", fontSize=8, leading=10, spaceAfter=2)
+_PDF_GRID_PROMPT_STYLE = ParagraphStyle("pdfGridPrompt", fontName="Helvetica", fontSize=6, leading=7.3)
 
 class StoryboardNotFound(Exception):
     """존재하지 않는 storyboard_id로 Export를 요청한 경우"""
@@ -220,12 +224,18 @@ def _downscale_to_jpeg(image_bytes: bytes) -> bytes:
     return buffer.getvalue()
 
 
-def _build_pdf_export(cuts: list[Cut]) -> bytes:
-    """컷마다 이미지 1장 + "Shot N" + 프롬프트를 한 페이지씩 구성해서 PDF 1개로 합성.
+def _resolve_pdf_page_size(sample_image_bytes: bytes) -> tuple[float, float]:
+    """컷 이미지의 실제 가로/세로 비율로 페이지 방향을 정함
 
-    ㅡ 일단은 pdf 1페이지에 '컷 이미지 + 해당 컷 프롬프트' 1개씩 넣어놓음 (A4 세로방향)
-    ㅡ 1페이지당 3개씩 넣는게 가독성이 나을지? 고민중
+    ㅡ 가로형, 정사각형: 가로 방향 / 세로형: 세로 방향
+    ㅡ 9컷 다 똑같이 생겨서 1컷만 실제 비율 확인하면됨
     """
+    width, height = PILImage.open(BytesIO(sample_image_bytes)).size
+    return landscape(A4) if width >= height else A4
+
+
+def _build_pdf_export(cuts: list[Cut]) -> bytes:
+    """9컷을 3x3 그리드로 한 페이지에 합성."""
     sorted_cuts = sorted(cuts, key=lambda cut: cut.order_no)
 
     with ThreadPoolExecutor(max_workers=len(sorted_cuts)) as executor:
@@ -233,31 +243,45 @@ def _build_pdf_export(cuts: list[Cut]) -> bytes:
             executor.map(lambda cut: _downscale_to_jpeg(storage.download_bytes(cut.image_url)), sorted_cuts)
         )
 
-    styles = getSampleStyleSheet()
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(
-        buffer, pagesize=A4, topMargin=_PDF_MARGIN, bottomMargin=_PDF_MARGIN,
-        leftMargin=_PDF_MARGIN, rightMargin=_PDF_MARGIN,
-    ) # A4 기본값은 세로방향(portrait) / 가로방향: landscape(A4)
+    page_size = _resolve_pdf_page_size(image_bytes_list[0])
+    margin = _PDF_GRID_MARGIN
+    grid_width = (page_size[0] - 2 * margin) / _PDF_GRID_SIZE
+    grid_height = (page_size[1] - 2 * margin) / _PDF_GRID_SIZE
+    image_max_height = grid_height * _PDF_GRID_IMAGE_HEIGHT_RATIO
 
-    elements = []
-    for index, (cut, image_bytes) in enumerate(zip(sorted_cuts, image_bytes_list)):
+    cells = []
+    for cut, image_bytes in zip(sorted_cuts, image_bytes_list):
         width, height = PILImage.open(BytesIO(image_bytes)).size
-        scale = min(_PDF_MAX_IMAGE_WIDTH / width, _PDF_MAX_IMAGE_HEIGHT / height, 1.0)
+        scale = min((grid_width * 0.85) / width, image_max_height / height, 1.0)
 
         image = RLImage(BytesIO(image_bytes), width=width * scale, height=height * scale)
-        image.hAlign = "CENTER"  # 첨부되는 컷별 이미지 가운데 정렬
-        elements.append(image)
-        elements.append(Spacer(1, 0.5 * cm))
-        elements.append(Paragraph(f"Shot {cut.order_no}", styles["Heading2"]))
-        # prompt_text는 Claude(LLM)가 생성한 텍스트라 &, <, > 포함 여부를 통제 못 함 —
-        # reportlab Paragraph는 이 문자들을 자체 마크업으로 파싱해서 이스케이프 없이 넣으면
-        # 내용이 조용히 손상되거나(예: "AT&T" -> "AT&T;") 특정 패턴에서 파싱 에러로 export가 실패함
-        elements.append(Paragraph(escape(cut.prompt_text or ""), styles["BodyText"]))
-        if index < len(sorted_cuts) - 1:
-            elements.append(PageBreak())
+        image.hAlign = "CENTER"  # 컷 이미지 가운데 정렬
+        cells.append([
+            image,
+            Spacer(1, 0.6 * cm),  # 이미지와 프롬프트 사이 간격 — PM님 피드백 반영
+            Paragraph(f"Shot {cut.order_no}", _PDF_GRID_SHOT_STYLE),
+            # &, <, > 이스케이프 문자 추가 (export오류나 문자깨지지않도록)
+            Paragraph(escape(cut.prompt_text or ""), _PDF_GRID_PROMPT_STYLE),
+        ])
 
-    doc.build(elements)
+    rows = [cells[row * _PDF_GRID_SIZE:(row + 1) * _PDF_GRID_SIZE] for row in range(_PDF_GRID_SIZE)]
+    table = Table(rows, colWidths=[grid_width] * _PDF_GRID_SIZE)
+    table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=page_size, topMargin=margin, bottomMargin=margin,
+        leftMargin=margin, rightMargin=margin,
+    )
+    doc.build([table])
     return buffer.getvalue()
 
 
