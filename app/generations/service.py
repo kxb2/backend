@@ -178,7 +178,7 @@ def _download_image(url: str) -> Image.Image:
     return Image.open(BytesIO(storage.download_bytes(url)))
 
 
-def _build_grid_image(cut_image_urls: list[str]) -> bytes:
+def build_grid_image(cut_image_urls: list[str]) -> bytes:
     """order_no 순서로 정렬된 9개 이미지 URL을 병렬로 내려받아 3x3 그리드 1장(JPEG)으로 합성.
 
     ㅡ executor.map은 입력 순서를 그대로 보존해서 반환하므로 order_no 순서가 깨지지 않음.
@@ -268,7 +268,7 @@ def run_generation(storyboard_id: int) -> None:
         db.commit()
 
         if all(cut.status == JobStatus.COMPLETED for cut in storyboard.cuts):
-            grid_bytes = _build_grid_image([cut.image_url for cut in storyboard.cuts])
+            grid_bytes = build_grid_image([cut.image_url for cut in storyboard.cuts])
             generation.grid_image_url = storage.upload_image_bytes(
                 grid_bytes, content_type="image/jpeg", folder=GRID_IMAGE_FOLDER
             )
