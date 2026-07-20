@@ -9,6 +9,9 @@ from app.exports import service as exports_service
 from app.exports.schemas import ExportCreateResponse, ImageExportRequest
 from app.exports.service import run_image_export, run_pdf_export
 from app.generations.service import run_generation
+from app.regenerations import service as regenerations_service
+from app.regenerations.schemas import RegenerationCreateResponse
+from app.regenerations.service import run_regeneration
 from app.storyboards import service
 from app.storyboards.schemas import (
     Genre,
@@ -102,6 +105,34 @@ def get_storyboard_prompt(storyboard_id: int, db: Session = Depends(get_db)) -> 
 
 
 @router.post(
+    "/{storyboard_id}/cuts/{cut_id}/regeneration",
+    response_model=RegenerationCreateResponse,
+    status_code=201,
+)
+def create_regeneration(
+    storyboard_id: int,
+    cut_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> RegenerationCreateResponse:
+    """특정 컷 재생성 요청 (현재 선택된 이미지 모델로, 컷별 프롬프트는 기존것 재사용)"""
+    try:
+        regeneration = regenerations_service.create_regeneration(db, storyboard_id, cut_id)
+    except regenerations_service.StoryboardNotFound as exc:
+        raise HTTPException(status_code=404, detail="storyboard not found") from exc
+    except regenerations_service.CutNotFound as exc:
+        raise HTTPException(status_code=404, detail="cut not found") from exc
+    except regenerations_service.CutNotReady as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except regenerations_service.RegenerationInProgress as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    background_tasks.add_task(run_regeneration, regeneration.id)
+
+    return RegenerationCreateResponse(regeneration_id=regeneration.id, status=regeneration.status)
+
+
+@router.post(
     "/{storyboard_id}/exports/image", response_model=ExportCreateResponse, status_code=201
 )
 def create_image_export(
@@ -120,6 +151,8 @@ def create_image_export(
     except exports_service.GenerationNotCompleted as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except exports_service.ExportInProgress as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except exports_service.RegenerationInProgress as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     background_tasks.add_task(run_image_export, export.id)
@@ -143,6 +176,8 @@ def create_pdf_export(
     except exports_service.GenerationNotCompleted as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except exports_service.ExportInProgress as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except exports_service.RegenerationInProgress as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     background_tasks.add_task(run_pdf_export, export.id)
