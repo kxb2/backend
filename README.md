@@ -47,19 +47,17 @@ docker-compose up --build
 
 ## 검토중
 1) 마이그레이션: Alembic 예정
-2) EC2 지원받으면: 배포 세팅 예정 → 세팅후 main 머지
-3) 캔버스 작업 들어가면: 캔버스 기능 확정사항에 대해 문의 예정
 
 ---
 
 ## 진행순서
-[develop에 머지된 PR 목록](https://github.com/kxb2/backend/pulls?q=is%3Apr+is%3Aclosed)
+[머지된 PR 목록](https://github.com/kxb2/backend/pulls?q=is%3Apr+is%3Aclosed)
 
 - [x] 스토리보드 생성/조회
 - [x] 레퍼런스 이미지 업로드
 - [x] 9컷 생성 + AI 연동 (Claude 통합 프롬프트 → 컷별 분리 → GPT/Gemini 9컷 이미지 병렬 생성 → 3×3 그리드 합성)
 - [x] 9컷 생성 상태/결과 조회 (`GET /generations/{id}`)
-- [ ] 내보내기 (PDF/이미지 Export)
+- [x] 내보내기 (PDF/이미지 Export)
 - [ ] 컷 재생성
 - [ ] 캔버스 조회/저장
 - [ ] 유저/인증 로그인
