@@ -250,8 +250,8 @@ def _solid_jpeg_bytes(color: tuple[int, int, int] = (200, 50, 50), size: tuple[i
 
 class TestDownscaleToJpeg:
     def test_already_small_jpeg_passes_through_unchanged(self):
-        """이미 JPEG고 크기도 기준 이하(Gemini 컷 등)면 재인코딩 없이 원본 그대로 반환(이중 압축 방지)"""
-        jpeg_bytes = _solid_jpeg_bytes(size=(1264, 848))
+        """이미 JPEG고 크기도 기준(_PDF_MAX_IMAGE_PIXELS) 이하면 재인코딩 없이 원본 그대로 반환(이중 압축 방지)"""
+        jpeg_bytes = _solid_jpeg_bytes(size=(800, 536))
 
         result = _downscale_to_jpeg(jpeg_bytes)
 
@@ -278,12 +278,12 @@ class TestDownscaleToJpeg:
 
 
 class TestBuildPdfExport:
-    def test_one_page_per_cut_with_shot_number_and_prompt(self, monkeypatch):
-        """9컷이면 9페이지, 각 페이지에 "Shot N"과 그 컷의 prompt_text가 들어가는지(F-05: 샷번호+프롬프트 매핑)"""
+    def test_nine_cuts_fit_on_one_page_grid_with_shot_number_and_prompt(self, monkeypatch):
+        """9컷이 3x3 그리드로 한 페이지에 다 들어가고, 프롬프트 문구 매핑 잘되는지"""
         cuts = [
             Cut(order_no=n, image_url=f"https://pub-x.r2.dev/cuts/{n}.png", prompt_text=f"description for shot {n}")
             for n in range(9, 0, -1)
-        ]  # order_no 역순으로 넣어도 페이지 순서가 1~9로 정렬되는지 같이 확인
+        ]  # order_no 역순으로 넣어도 그리드 순서가 1~9로 정렬되는지 같이 확인
 
         png_bytes = _solid_png_bytes()
         monkeypatch.setattr(
@@ -293,11 +293,43 @@ class TestBuildPdfExport:
         pdf_bytes = _build_pdf_export(cuts)
 
         reader = PdfReader(BytesIO(pdf_bytes))
-        assert len(reader.pages) == 9
-        for index, page in enumerate(reader.pages, start=1):
-            text = page.extract_text()
-            assert f"Shot {index}" in text
-            assert f"description for shot {index}" in text
+        assert len(reader.pages) == 1
+        text = reader.pages[0].extract_text()
+        for n in range(1, 10):
+            assert f"Shot {n}" in text
+            assert f"description for shot {n}" in text
+
+    def test_wide_or_square_cut_images_use_landscape_page(self, monkeypatch):
+        """컷 이미지가 정사각형/가로형이면 페이지를 가로 방향으로 잡는지"""
+        cuts = [
+            Cut(order_no=n, image_url=f"https://pub-x.r2.dev/cuts/{n}.png", prompt_text=f"shot {n}")
+            for n in range(1, 10)
+        ]
+        square_png_bytes = _solid_png_bytes(size=(200, 200))
+        monkeypatch.setattr(
+            "app.core.storage.httpx.get", lambda url, **kwargs: Mock(content=square_png_bytes)
+        )
+
+        pdf_bytes = _build_pdf_export(cuts)
+
+        mediabox = PdfReader(BytesIO(pdf_bytes)).pages[0].mediabox
+        assert float(mediabox.width) > float(mediabox.height)
+
+    def test_tall_cut_images_use_portrait_page(self, monkeypatch):
+        """컷 이미지가 세로형이면 페이지를 세로 방향으로 잡는지"""
+        cuts = [
+            Cut(order_no=n, image_url=f"https://pub-x.r2.dev/cuts/{n}.png", prompt_text=f"shot {n}")
+            for n in range(1, 10)
+        ]
+        tall_png_bytes = _solid_png_bytes(size=(200, 400))
+        monkeypatch.setattr(
+            "app.core.storage.httpx.get", lambda url, **kwargs: Mock(content=tall_png_bytes)
+        )
+
+        pdf_bytes = _build_pdf_export(cuts)
+
+        mediabox = PdfReader(BytesIO(pdf_bytes)).pages[0].mediabox
+        assert float(mediabox.height) > float(mediabox.width)
 
     def test_downscales_image_to_fit_page(self, monkeypatch):
         """실제 컷 이미지가 페이지보다 훨씬 크면 페이지 안에 들어가도록 줄어드는지(원본 그대로 못 넣음)"""
