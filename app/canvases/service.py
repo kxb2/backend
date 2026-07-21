@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
@@ -13,6 +15,8 @@ from app.canvases.schemas import (
 )
 from app.generations.models import Cut, Generation
 from app.storyboards.models import Storyboard
+
+logger = logging.getLogger(__name__)
 
 # 유저/인증 붙기 전까지 GET /canvases가 전체 캔버스를 무제한 노출하지 않도록 하드캡.
 # user_id가 생기면 이 캡보다 먼저 `WHERE user_id == current_user.id` 필터 추가하렴
@@ -88,7 +92,11 @@ def delete_canvas(db: Session, canvas_id: int) -> None:
 
     for url in urls:
         if storage.is_canvas_attachment_url(url):
-            storage.delete_file(url)
+            try:
+                storage.delete_file(url)
+            except Exception:
+                # 캔버스 삭제 자체는 성공 + 첨부파일 정리만 실패: 로그만 남김.
+                logger.exception("캔버스 삭제는 성공했지만 첨부파일 삭제 실패 (canvas_id=%d, url=%s)", canvas_id, url)
 
 
 def save_canvas(
@@ -170,7 +178,11 @@ def save_canvas(
     new_urls |= {element.thumbnail_url for element in elements if element.thumbnail_url}
     for url in old_urls - new_urls:
         if storage.is_canvas_attachment_url(url):
-            storage.delete_file(url)
+            try:
+                storage.delete_file(url)
+            except Exception:
+                # 캔버스 저장 자체는 성공 + 옛 첨부파일 정리 실패: 로그만 남김.
+                logger.exception("캔버스 저장은 성공했지만 옛 첨부파일 삭제 실패 (canvas_id=%d, url=%s)", canvas_id, url)
 
     id_to_client_key = {row_id: client_key for client_key, row_id in client_key_to_id.items()}
     return canvas, id_to_client_key

@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
@@ -6,7 +8,10 @@ from app.core.constants import CUT_COUNT
 from app.core.enums import Genre, ImageModel, JobStatus
 from app.exports.models import Export
 from app.generations.models import Cut, Generation
+from app.regenerations.models import Regeneration
 from app.storyboards.models import ReferenceImage, Storyboard
+
+logger = logging.getLogger(__name__)
 
 MAX_REFERENCE_IMAGES = 10
 
@@ -18,6 +23,30 @@ class ReferenceImageLimitExceeded(Exception):
 
 class StoryboardNotFound(Exception):
     """존재하지 않는 storyboard_id로 요청한 경우"""
+
+
+class GenerationInProgress(Exception):
+    """9컷 생성이 진행 중(PENDING/PROCESSING)인 스토리보드를 삭제하려는 경우"""
+
+    def __init__(self, message: str = "9컷 생성이 진행 중이라 스토리보드를 삭제할 수 없습니다. 완료 후 다시 시도해 주세요."):
+        super().__init__(message)
+
+
+class RegenerationInProgress(Exception):
+    """컷 재생성이 진행 중(PENDING/PROCESSING)인 스토리보드를 삭제하려는 경우"""
+
+    def __init__(
+        self,
+        message: str = "진행 중인 컷 재생성 작업이 있어 스토리보드를 삭제할 수 없습니다. 완료 후 다시 시도해 주세요.",
+    ):
+        super().__init__(message)
+
+
+class ExportInProgress(Exception):
+    """내보내기가 진행 중(PENDING/PROCESSING)인 스토리보드를 삭제하려는 경우"""
+
+    def __init__(self, message: str = "진행 중인 Export 작업이 있어 스토리보드를 삭제할 수 없습니다. 완료 후 다시 시도해 주세요."):
+        super().__init__(message)
 
 
 def create_storyboard(
@@ -67,9 +96,13 @@ def create_storyboard(
         db.commit()
     except Exception:
         db.rollback()
-        # DB 저장 실패해도 R2 업로드는 이미 끝난 상태라, 참조 없는 파일이 남지 않도록 정리
+        # DB 저장 실패해도 R2 업로드는 이미 끝난 상태라 R2 고아 안남도록 정리하는것
+        # ㅡ 파일 하나 삭제가 실패해도 나머지는 계속 정리 시도 + 원래 DB 에러가 묻히지 않게 raise로 유지
         for url in uploaded_urls:
-            storage.delete_file(url)
+            try:
+                storage.delete_file(url)  # DB 저장 실패했으니까 성공한 R2 업로드도 버리기
+            except Exception:
+                logger.exception("스토리보드 생성 실패 롤백 중 참조이미지 삭제 실패 (url=%s)", url)
         raise
 
     return storyboard, generation
@@ -80,15 +113,58 @@ def get_storyboard(db: Session, storyboard_id: int) -> Storyboard | None:
     return db.get(Storyboard, storyboard_id)
 
 
-def delete_storyboard(db: Session, storyboard_id: int) -> None:
-    """스토리보드 삭제(개발용으로 일단 만들)
+def _raise_if_generation_in_progress(db: Session, storyboard_id: int) -> None:
+    """스토리보드의 9컷 생성이 PENDING/PROCESSING이면 삭제 차단."""
+    generation_status = (
+        db.query(Generation.status).filter(Generation.storyboard_id == storyboard_id).scalar()
+    )
+    if generation_status in (JobStatus.PENDING, JobStatus.PROCESSING):
+        raise GenerationInProgress()
 
+
+def _raise_if_regeneration_in_progress(db: Session, storyboard_id: int) -> None:
+    """스토리보드 컷 중 하나라도 재생성(PENDING/PROCESSING)이 있으면 삭제 차단."""
+    exists = (
+        db.query(Regeneration.id)
+        .join(Cut, Cut.id == Regeneration.cut_id)
+        .filter(
+            Cut.storyboard_id == storyboard_id,
+            Regeneration.status.in_([JobStatus.PENDING, JobStatus.PROCESSING]),
+        )
+        .first()
+    )
+    if exists is not None:
+        raise RegenerationInProgress()
+
+
+def _raise_if_export_in_progress(db: Session, storyboard_id: int) -> None:
+    """스토리보드에 PENDING/PROCESSING 내보내기가 있으면 삭제 차단."""
+    exists = (
+        db.query(Export.id)
+        .filter(
+            Export.storyboard_id == storyboard_id,
+            Export.status.in_([JobStatus.PENDING, JobStatus.PROCESSING]),
+        )
+        .first()
+    )
+    if exists is not None:
+        raise ExportInProgress()
+
+
+def delete_storyboard(db: Session, storyboard_id: int) -> None:
+    """스토리보드 삭제
+
+    ㅡ 진행 중인 생성/재생성/Export가 하나라도 있으면 삭제 차단
     ㅡ 순서 중요: DB 삭제 → R2 삭제 (DB 깨지는것보다 R2 고아 남는게 나음)
     ㅡ URL은 storyboard.cuts 등 관계속성 대신 컬럼 직접 쿼리 (null로 바꾸려고해서)
     """
     storyboard = db.get(Storyboard, storyboard_id)
     if storyboard is None:
         raise StoryboardNotFound()
+
+    _raise_if_generation_in_progress(db, storyboard_id)
+    _raise_if_regeneration_in_progress(db, storyboard_id)
+    _raise_if_export_in_progress(db, storyboard_id)
 
     urls = [url for (url,) in db.query(ReferenceImage.image_url).filter(
         ReferenceImage.storyboard_id == storyboard_id
@@ -109,4 +185,8 @@ def delete_storyboard(db: Session, storyboard_id: int) -> None:
     db.commit()
 
     for url in urls:
-        storage.delete_file(url)
+        try:
+            storage.delete_file(url)
+        except Exception:
+            # 스토리보드 삭제 자체는 성공 + 첨부파일 정리만 실패: 로그만 남김.
+            logger.exception("스토리보드 삭제는 성공했지만 첨부파일 삭제 실패 (storyboard_id=%d, url=%s)", storyboard_id, url)

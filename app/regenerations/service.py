@@ -173,7 +173,14 @@ def run_regeneration(regeneration_id: int) -> None:
         db.commit()
 
         if old_image_url:
-            storage.delete_file(old_image_url)
+            try:
+                storage.delete_file(old_image_url)
+            except Exception:
+                # 컷 재생성 자체는 성공 + 옛 이미지 삭제 실패 케이스는
+                # → 로그만 남기고 regeneration.status는 COMPLETED로 유지.
+                logger.exception(
+                    "컷 재생성은 성공했지만 옛 이미지 삭제 실패 (regeneration_id=%d)", regeneration_id
+                )
 
         try:
             _rebuild_grid_if_all_completed(db, storyboard)
