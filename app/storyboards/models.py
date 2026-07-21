@@ -19,6 +19,7 @@ class Storyboard(Base):
     __tablename__ = "storyboards"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str | None] = mapped_column(String(200))
     scenario_text: Mapped[str] = mapped_column(Text)
     genre: Mapped[Genre] = mapped_column(_genre_type)
     style: Mapped[str | None] = mapped_column(String(50))
