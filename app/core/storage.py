@@ -21,6 +21,9 @@ settings = get_settings()
 ALLOWED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
 
+ALLOWED_VIDEO_CONTENT_TYPES = {"video/mp4", "video/webm", "video/quicktime"}
+MAX_VIDEO_SIZE = 50 * 1024 * 1024  # 50MB
+
 # R2 다운로드(그리드 합성, export시) 오류 재시도 로직 추가
 MAX_DOWNLOAD_RETRIES = 2
 _RETRYABLE_DOWNLOAD_STATUS_CODES = {429, 500, 502, 503, 504}
@@ -29,7 +32,24 @@ CONTENT_TYPE_EXT = {
     "image/jpeg": "jpg",
     "image/png": "png",
     "image/webp": "webp",
+    "video/mp4": "mp4",
+    "video/webm": "webm",
+    "video/quicktime": "mov",
 }
+
+CANVAS_ATTACHMENT_FOLDERS = ("canvas-attachments", "canvas-thumbnails")
+
+
+def is_canvas_attachment_url(url: str) -> bool:
+    """캔버스 첨부 업로드가 소유한 R2 파일인지 확인.
+
+    ㅡ 스토리보드가 소유한 파일까지 잘못 지우지 않도록
+    """
+    prefix = f"{settings.r2_public_url}/"
+    if not url.startswith(prefix):
+        return False
+    folder = url[len(prefix):].split("/", 1)[0]
+    return folder in CANVAS_ATTACHMENT_FOLDERS
 
 
 def _verify_image_magic(content_type: str, data: bytes) -> bool:
@@ -41,6 +61,18 @@ def _verify_image_magic(content_type: str, data: bytes) -> bool:
         return data.startswith(b"\x89PNG\r\n\x1a\n")
     if content_type == "image/webp":
         return data.startswith(b"RIFF") and data[8:12] == b"WEBP"
+    return False
+
+
+def _verify_video_magic(content_type: str, data: bytes) -> bool:
+    """선언된 Content-Type과 실제 파일 바이트 시그니처가 일치하는지 확인.
+
+    ㅡ mp4/mov는 같은 ftyp 정보블록이라 동일하게 검사.
+    """
+    if content_type in ("video/mp4", "video/quicktime"):
+        return data[4:8] == b"ftyp"
+    if content_type == "video/webm":
+        return data.startswith(b"\x1a\x45\xdf\xa3")
     return False
 
 
@@ -150,6 +182,29 @@ def validate_image(file: UploadFile) -> bytes:
 
 def upload_image_bytes(data: bytes, content_type: str, folder: str) -> str:
     """검증된 이미지 바이트를 R2에 업로드하고 공개 URL을 반환."""
+    ext = CONTENT_TYPE_EXT[content_type]
+    key = f"{folder}/{uuid.uuid4().hex}.{ext}"
+    return upload_bytes(data, key, content_type)
+
+
+def validate_video(file: UploadFile) -> bytes:
+    """영상 파일을 검증하고 바이트 데이터를 반환 (R2 업로드는 X)."""
+    if file.content_type not in ALLOWED_VIDEO_CONTENT_TYPES:
+        raise HTTPException(status_code=400, detail="허용되지 않는 영상 형식입니다.")
+
+    data = file.file.read(MAX_VIDEO_SIZE + 1)
+
+    if len(data) > MAX_VIDEO_SIZE:
+        raise HTTPException(status_code=400, detail="영상 크기는 최대 50MB까지 허용됩니다.")
+
+    if not _verify_video_magic(file.content_type, data):
+        raise HTTPException(status_code=400, detail="허용되지 않는 영상 형식입니다.")
+
+    return data
+
+
+def upload_video_bytes(data: bytes, content_type: str, folder: str) -> str:
+    """검증된 영상 바이트를 R2에 업로드하고 공개 URL을 반환."""
     ext = CONTENT_TYPE_EXT[content_type]
     key = f"{folder}/{uuid.uuid4().hex}.{ext}"
     return upload_bytes(data, key, content_type)

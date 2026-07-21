@@ -16,12 +16,16 @@
 | 스토리보드 생성 + 9컷 생성 요청 | POST | - | `/storyboards` | 시나리오, 장르, 이미지 모델 선택(GPT image/Gemini), 고급 설정, 레퍼런스 이미지(0~10장)를 받아 스토리보드를 저장함과 동시에 AI에게 9컷 생성 작업을 요청합니다. 응답: `{ storyboardId, generationId, status: "pending" }` |
 | 스토리보드 조회 | GET | storyboardId | `/storyboards/{storyboardId}` | 저장된 스토리보드 입력값과 레퍼런스 이미지를 조회합니다. |
 | 프롬프트 조회 | GET | storyboardId | `/storyboards/{storyboardId}/prompt` | 생성된 통합 프롬프트(Shot 1~9 구분 포함, 영어 고정)를 조회합니다. |
+| 스토리보드 삭제 | DELETE | storyboardId | `/storyboards/{storyboardId}` | 스토리보드를 삭제합니다. 관련 R2 파일(레퍼런스 이미지, 컷 이미지, 그리드, export)도 함께 정리됩니다. 진행 중인 생성/재생성/Export 작업이 있으면 삭제가 거부됩니다(409). |
 | 9컷 생성 상태/결과 조회 | GET | generationId | `/generations/{generationId}` | 9컷 생성 진행 상태(status)를 조회하고, `completed`면 결과(그리드 이미지, 컷 목록)를 함께 반환합니다. |
 | 특정 컷 재생성 | POST | storyboardId, cutId | `/storyboards/{storyboardId}/cuts/{cutId}/regeneration` | 특정 컷 1개만 재생성합니다(현재 선택된 이미지 모델로만 수행). 응답: `{ regenerationId, status: "pending" }` |
 | 재생성 결과 확인 | GET | regenerationId | `/regenerations/{regenerationId}` | 특정 컷 재생성 작업의 진행 상태(status)와 결과를 조회합니다. |
 | 캔버스 생성 | POST | - | `/canvases` | 빈 캔버스를 새로 생성합니다. storyboard와 무관하게 독립적으로 생성 가능(연결 시 storyboardId는 선택 입력). 응답: `{ canvasId }` |
+| 캔버스 목록조회 | GET | - | `/canvases` | 캔버스 전체 목록을 요약 정보(id, storyboardId, createdAt, updatedAt)로 조회합니다. |
 | 캔버스 조회 | GET | canvasId | `/canvases/{canvasId}` | 생성된 컷과 프롬프트의 캔버스 배치 정보를 조회합니다. |
-| 캔버스 저장 | PUT | canvasId | `/canvases/{canvasId}` | 캔버스 위치를 저장합니다. |
+| 캔버스 저장 | PUT | canvasId | `/canvases/{canvasId}` | 캔버스 요소(elements)·연결(connections) 전체를 요청 내용으로 교체 저장합니다(전체 교체 방식). |
+| 캔버스 이미지/영상 업로드 | POST | canvasId | `/canvases/{canvasId}/attachments` | 이미지/영상 파일을 R2에 업로드하고 url을 반환합니다(영상은 프론트가 만든 썸네일 이미지도 같이 보내면 별도로 R2 업로드 후 함께 반환. 요소로 저장하려면 이후 캔버스 저장 API에 포함해서 호출). 응답: `{ contentUrl, thumbnailUrl, type }` |
+| 캔버스 삭제 | DELETE | canvasId | `/canvases/{canvasId}` | 캔버스를 삭제합니다. 캔버스가 소유한 첨부 이미지/영상(R2)도 함께 정리됩니다. |
 | PDF Export | POST | storyboardId | `/storyboards/{storyboardId}/exports/pdf` | 이미지와 프롬프트를 PDF로 생성합니다. 응답: `{ exportId, status: "pending" }` |
 | 이미지 Export | POST | storyboardId | `/storyboards/{storyboardId}/exports/image` | 3×3 그리드 이미지 1장을 Export합니다. 옵션으로 개별 컷 이미지도 포함할 수 있습니다. 응답: `{ exportId, status: "pending" }` |
 | Export 결과 조회 | GET | exportId | `/exports/{exportId}` | PDF 또는 이미지 Export 완료 여부(status)와 다운로드 링크를 조회합니다. |

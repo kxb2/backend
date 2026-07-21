@@ -4,12 +4,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.canvases.router import router as canvases_router
 from app.core.config import get_settings
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.exports.router import router as exports_router
 from app.generations.router import router as generations_router
 from app.generations.service import recover_stuck_generations
+from app.regenerations.router import router as regenerations_router
+from app.regenerations.service import recover_stuck_regenerations
 from app.routers import health
 from app.storyboards.router import router as storyboards_router
 
@@ -28,6 +31,12 @@ async def lifespan(app: FastAPI):
             recovered = recover_stuck_generations(db)
             if recovered:
                 logger.warning("서버 재시작으로 중단된 생성 job %d개를 failed 처리했습니다.", recovered)
+
+            recovered_regenerations = recover_stuck_regenerations(db)
+            if recovered_regenerations:
+                logger.warning(
+                    "서버 재시작으로 중단된 재생성 job %d개를 failed 처리했습니다.", recovered_regenerations
+                )
         finally:
             db.close()
     except Exception:
@@ -49,3 +58,5 @@ app.include_router(health.router)
 app.include_router(storyboards_router)
 app.include_router(generations_router)
 app.include_router(exports_router)
+app.include_router(canvases_router)
+app.include_router(regenerations_router)

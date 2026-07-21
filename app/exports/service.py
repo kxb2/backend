@@ -27,6 +27,7 @@ from app.core.enums import ExportType, JobStatus
 from app.db.session import SessionLocal
 from app.exports.models import Export
 from app.generations.models import Cut
+from app.regenerations.models import Regeneration
 from app.storyboards.models import Storyboard
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,13 @@ class ExportInProgress(Exception):
         super().__init__(message)
 
 
+class RegenerationInProgress(Exception):
+    """한 컷이라도 재생성이 진행 중인 상태에서 Export를 요청한 경우"""
+
+    def __init__(self, message: str = "진행 중인 컷 재생성 작업이 있어 Export할 수 없습니다. 완료 후 다시 시도해 주세요."):
+        super().__init__(message)
+
+
 def _raise_if_export_in_progress(db: Session, storyboard_id: int) -> None:
     """같은 storyboard에 PENDING/PROCESSING Export가 이미 있으면 중복 생성 차단
     (연타/중복 클릭으로 같은 storyboard의 cuts/generation을 동시에 읽는 백그라운드 태스크가 여러 개 뜨는 것 방지)."""
@@ -72,6 +80,25 @@ def _raise_if_export_in_progress(db: Session, storyboard_id: int) -> None:
     )
     if exists is not None:
         raise ExportInProgress()
+
+
+def _raise_if_regeneration_in_progress(db: Session, storyboard_id: int) -> None:
+    """스토리보드 컷 중 하나라도 재생성(PENDING/PROCESSING)이 있으면 Export 차단.
+
+    ㅡ Export가 이미 시작된 뒤에 재생성이 새로 걸리는 반대 방향은 여전히 가능하지만,
+    발생 빈도가 훨씬 낮을것같아 우선 재생성 → Export 방향만 방어
+    """
+    exists = (
+        db.query(Regeneration.id)
+        .join(Cut, Cut.id == Regeneration.cut_id)
+        .filter(
+            Cut.storyboard_id == storyboard_id,
+            Regeneration.status.in_([JobStatus.PENDING, JobStatus.PROCESSING]),
+        )
+        .first()
+    )
+    if exists is not None:
+        raise RegenerationInProgress()
 
 
 def _get_exportable_storyboard(db: Session, storyboard_id: int) -> Storyboard:
@@ -103,6 +130,7 @@ def create_image_export(db: Session, storyboard_id: int, *, include_individual_c
     """이미지 Export job 등록 (실제 처리는 background task: run_image_export가 수행)"""
     storyboard = _get_exportable_storyboard(db, storyboard_id)
     _raise_if_export_in_progress(db, storyboard_id)
+    _raise_if_regeneration_in_progress(db, storyboard_id)
 
     export = Export(
         storyboard_id=storyboard.id,
@@ -120,6 +148,7 @@ def create_pdf_export(db: Session, storyboard_id: int) -> Export:
     """PDF Export job 등록 (실제 처리는 background task: run_pdf_export가 수행)"""
     storyboard = _get_exportable_storyboard(db, storyboard_id)
     _raise_if_export_in_progress(db, storyboard_id)
+    _raise_if_regeneration_in_progress(db, storyboard_id)
 
     export = Export(storyboard_id=storyboard.id, type=ExportType.PDF, status=JobStatus.PENDING)
     db.add(export)
@@ -269,7 +298,7 @@ def _build_pdf_export(cuts: list[Cut]) -> bytes:
     table.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),  # 컷별 회색구분선(필요없어지면 여기수정하면됨)
         ("LEFTPADDING", (0, 0), (-1, -1), 4),
         ("RIGHTPADDING", (0, 0), (-1, -1), 4),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
