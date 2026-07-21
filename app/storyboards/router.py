@@ -86,11 +86,17 @@ def get_storyboard(storyboard_id: int, db: Session = Depends(get_db)):
 
 @router.delete("/{storyboard_id}", status_code=204)
 def delete_storyboard(storyboard_id: int, db: Session = Depends(get_db)) -> None:
-    """스토리보드 삭제(개발용으로 미리) — 관련 R2 파일(레퍼런스, 컷, 그리드, export)도 정리"""
+    """스토리보드 삭제 — 관련 R2 파일(레퍼런스, 컷, 그리드, export)도 정리"""
     try:
         service.delete_storyboard(db, storyboard_id)
     except service.StoryboardNotFound as exc:
         raise HTTPException(status_code=404, detail="storyboard not found") from exc
+    except service.GenerationInProgress as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except service.RegenerationInProgress as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except service.ExportInProgress as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/{storyboard_id}/prompt", response_model=StoryboardPromptResponse)

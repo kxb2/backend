@@ -12,6 +12,7 @@ from app.core.enums import ExportType, Genre, ImageModel, JobStatus
 from app.db.base import Base
 from app.exports.models import Export
 from app.generations.models import Cut, Generation
+from app.regenerations.models import Regeneration
 from app.storyboards import service
 from app.storyboards.models import ReferenceImage, Storyboard
 
@@ -112,6 +113,86 @@ class TestDeleteStoryboard:
             service.delete_storyboard(db, storyboard_id)
 
             assert db.get(Storyboard, storyboard_id) is None
+            assert deleted_urls == []
+        finally:
+            db.close()
+
+
+class TestDeleteStoryboardGuards:
+    """진행 중인 생성/재생성/Export가 있으면 삭제 자체가 막히는지."""
+
+    @pytest.mark.parametrize("status", [JobStatus.PENDING, JobStatus.PROCESSING])
+    def test_raises_when_generation_in_progress(self, monkeypatch, session_factory, status):
+        db = session_factory()
+        try:
+            storyboard = Storyboard(scenario_text="test", genre=Genre.DRAMA, image_model=ImageModel.GPT_IMAGE)
+            db.add(storyboard)
+            db.flush()
+            db.add(Generation(storyboard_id=storyboard.id, status=status))
+            db.commit()
+            storyboard_id = storyboard.id
+
+            deleted_urls = []
+            monkeypatch.setattr(service.storage, "delete_file", lambda url: deleted_urls.append(url))
+
+            with pytest.raises(service.GenerationInProgress):
+                service.delete_storyboard(db, storyboard_id)
+
+            assert db.get(Storyboard, storyboard_id) is not None
+            assert deleted_urls == []
+        finally:
+            db.close()
+
+    @pytest.mark.parametrize("status", [JobStatus.PENDING, JobStatus.PROCESSING])
+    def test_raises_when_regeneration_in_progress(self, monkeypatch, session_factory, status):
+        db = session_factory()
+        try:
+            storyboard = Storyboard(scenario_text="test", genre=Genre.DRAMA, image_model=ImageModel.GPT_IMAGE)
+            db.add(storyboard)
+            db.flush()
+            db.add(Generation(storyboard_id=storyboard.id, status=JobStatus.COMPLETED))
+            cut = Cut(
+                storyboard_id=storyboard.id,
+                order_no=1,
+                status=JobStatus.COMPLETED,
+                image_url="https://pub-x.r2.dev/cuts/1.png",
+            )
+            db.add(cut)
+            db.flush()
+            db.add(Regeneration(cut_id=cut.id, status=status))
+            db.commit()
+            storyboard_id = storyboard.id
+
+            deleted_urls = []
+            monkeypatch.setattr(service.storage, "delete_file", lambda url: deleted_urls.append(url))
+
+            with pytest.raises(service.RegenerationInProgress):
+                service.delete_storyboard(db, storyboard_id)
+
+            assert db.get(Storyboard, storyboard_id) is not None
+            assert deleted_urls == []
+        finally:
+            db.close()
+
+    @pytest.mark.parametrize("status", [JobStatus.PENDING, JobStatus.PROCESSING])
+    def test_raises_when_export_in_progress(self, monkeypatch, session_factory, status):
+        db = session_factory()
+        try:
+            storyboard = Storyboard(scenario_text="test", genre=Genre.DRAMA, image_model=ImageModel.GPT_IMAGE)
+            db.add(storyboard)
+            db.flush()
+            db.add(Generation(storyboard_id=storyboard.id, status=JobStatus.COMPLETED))
+            db.add(Export(storyboard_id=storyboard.id, type=ExportType.PDF, status=status))
+            db.commit()
+            storyboard_id = storyboard.id
+
+            deleted_urls = []
+            monkeypatch.setattr(service.storage, "delete_file", lambda url: deleted_urls.append(url))
+
+            with pytest.raises(service.ExportInProgress):
+                service.delete_storyboard(db, storyboard_id)
+
+            assert db.get(Storyboard, storyboard_id) is not None
             assert deleted_urls == []
         finally:
             db.close()
