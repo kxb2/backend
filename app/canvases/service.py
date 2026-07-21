@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import UploadFile
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core import storage
@@ -55,12 +56,21 @@ def _ensure_storyboard_exists(db: Session, storyboard_id: int) -> None:
         raise StoryboardNotFound()
 
 
+def _next_default_title(db: Session) -> str:
+    """처음 제목 (임시: 전역 sequence) — 유저별 번호 붙기 전까지 "canvas N" 형태로 부여.
+    DB SEQUENCE(canvas_default_title_seq)에서 번호 발급받아서
+    동시 요청 와도 중복 안 되고, title 텍스트를 다시 파싱하지 않아
+    title을 자유롭게 수정해도 번호 로직에 영향 X."""
+    next_no = db.execute(text("SELECT nextval('canvas_default_title_seq')")).scalar()
+    return f"canvas {next_no}"
+
+
 def create_canvas(db: Session, storyboard_id: int | None) -> Canvas:
     """빈 캔버스 생성"""
     if storyboard_id is not None:
         _ensure_storyboard_exists(db, storyboard_id)
 
-    canvas = Canvas(storyboard_id=storyboard_id)
+    canvas = Canvas(title=_next_default_title(db), storyboard_id=storyboard_id)
     db.add(canvas)
     db.commit()
     return canvas
@@ -336,6 +346,7 @@ def build_canvas_detail(
 
     return CanvasDetailResponse(
         id=canvas.id,
+        title=canvas.title,
         storyboard_id=canvas.storyboard_id,
         elements=element_outs,
         connections=connection_outs,

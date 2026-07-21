@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from app.canvases.router import router as canvases_router
 from app.core.config import get_settings
@@ -25,6 +26,12 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     try:
         Base.metadata.create_all(bind=engine)
+
+        # 스토리보드/캔버스 기본 제목용 SEQUENCE — alembic 도입 전까지 임시 안전장치.
+        # 유저별 카운터로 바뀌면 이 블록은 통째로 삭제.
+        with engine.begin() as conn:
+            conn.execute(text("CREATE SEQUENCE IF NOT EXISTS storyboard_default_title_seq"))
+            conn.execute(text("CREATE SEQUENCE IF NOT EXISTS canvas_default_title_seq"))
 
         db = SessionLocal()
         try:
