@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
@@ -7,6 +9,8 @@ from app.core.enums import Genre, ImageModel, JobStatus
 from app.exports.models import Export
 from app.generations.models import Cut, Generation
 from app.storyboards.models import ReferenceImage, Storyboard
+
+logger = logging.getLogger(__name__)
 
 MAX_REFERENCE_IMAGES = 10
 
@@ -67,9 +71,13 @@ def create_storyboard(
         db.commit()
     except Exception:
         db.rollback()
-        # DB 저장 실패해도 R2 업로드는 이미 끝난 상태라, 참조 없는 파일이 남지 않도록 정리
+        # DB 저장 실패해도 R2 업로드는 이미 끝난 상태라 R2 고아 안남도록 정리하는것
+        # ㅡ 파일 하나 삭제가 실패해도 나머지는 계속 정리 시도 + 원래 DB 에러가 묻히지 않게 raise로 유지
         for url in uploaded_urls:
-            storage.delete_file(url)
+            try:
+                storage.delete_file(url)  # DB 저장 실패했으니까 성공한 R2 업로드도 버리기
+            except Exception:
+                logger.exception("스토리보드 생성 실패 롤백 중 참조이미지 삭제 실패 (url=%s)", url)
         raise
 
     return storyboard, generation
@@ -109,4 +117,8 @@ def delete_storyboard(db: Session, storyboard_id: int) -> None:
     db.commit()
 
     for url in urls:
-        storage.delete_file(url)
+        try:
+            storage.delete_file(url)
+        except Exception:
+            # 스토리보드 삭제 자체는 성공 + 첨부파일 정리만 실패: 로그만 남김.
+            logger.exception("스토리보드 삭제는 성공했지만 첨부파일 삭제 실패 (storyboard_id=%d, url=%s)", storyboard_id, url)
