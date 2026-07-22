@@ -73,6 +73,11 @@ def create_storyboard(
 
     # R2 업로드 전에 전체 파일을 먼저 검증 (하나라도 형식/용량 문제면 업로드 자체를 하지 않음)
     reference_data = [(storage.validate_image(image), image.content_type) for image in reference_images]
+    # 레퍼런스 이미지 업로드 전에 리사이즈: 저장 용량/토큰 비용 ↓
+    reference_data = [
+        (storage.resize_reference_image(data, content_type), content_type)
+        for data, content_type in reference_data
+    ]
 
     storyboard = Storyboard(
         title=_next_default_title(db),

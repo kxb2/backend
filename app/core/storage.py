@@ -5,12 +5,14 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, wait
 from functools import lru_cache
+from io import BytesIO
 
 import boto3
 import httpx
 from botocore.client import BaseClient
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import HTTPException, UploadFile
+from PIL import Image, ImageOps
 
 from app.core.config import get_settings
 
@@ -20,6 +22,15 @@ settings = get_settings()
 
 ALLOWED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
+
+# 레퍼런스 이미지는 Claude 분석용이라 원본 해상도 필요 없음
+# R2 저장 전에 미리 줄여서 Claude 호출 시 이미지 입력 토큰 비용 ↓
+REFERENCE_IMAGE_MAX_DIMENSION = 1024
+_CONTENT_TYPE_TO_PIL_FORMAT = {
+    "image/jpeg": "JPEG",
+    "image/png": "PNG",
+    "image/webp": "WEBP",
+}
 
 ALLOWED_VIDEO_CONTENT_TYPES = {"video/mp4", "video/webm", "video/quicktime"}
 MAX_VIDEO_SIZE = 50 * 1024 * 1024  # 50MB
@@ -178,6 +189,20 @@ def validate_image(file: UploadFile) -> bytes:
         raise HTTPException(status_code=400, detail="허용되지 않는 이미지 형식입니다.")
 
     return data
+
+
+def resize_reference_image(data: bytes, content_type: str) -> bytes:
+    """긴 변이 REFERENCE_IMAGE_MAX_DIMENSION을 넘을 때만 축소(작은 이미지는 원본 그대로 반환).
+    """
+    image = Image.open(BytesIO(data))
+    if max(image.size) <= REFERENCE_IMAGE_MAX_DIMENSION:
+        return data
+
+    image = ImageOps.exif_transpose(image) # 방향 태그가 있다면 방향 유지
+    image.thumbnail((REFERENCE_IMAGE_MAX_DIMENSION, REFERENCE_IMAGE_MAX_DIMENSION))
+    buffer = BytesIO()
+    image.save(buffer, format=_CONTENT_TYPE_TO_PIL_FORMAT[content_type])
+    return buffer.getvalue()
 
 
 def upload_image_bytes(data: bytes, content_type: str, folder: str) -> str:
