@@ -2,6 +2,8 @@
 
 — 시나리오+장르+고급설정(+레퍼런스 이미지)로 9컷 통합 영문 프롬프트 생성."""
 
+import logging
+
 import anthropic
 
 from app.ai.base import PromptAdapter
@@ -15,6 +17,8 @@ from app.ai.exceptions import (
 from app.ai.retry import call_with_retry
 from app.core.config import get_settings
 from app.core.enums import Genre
+
+logger = logging.getLogger(__name__)
 
 # 테스트에서 응답이 중간에 잘려서(stop_reason=max_tokens) 재시도 낭비된 사례 있어서 상향
 MAX_TOKENS = 2500
@@ -191,11 +195,30 @@ class ClaudePromptAdapter(PromptAdapter):
                 message = self._client.messages.create(
                     model=self._model,
                     max_tokens=MAX_TOKENS,
-                    system=SYSTEM_PROMPT,
+                    # SYSTEM_PROMPT가 모든 호출에서 동일해서 캐싱 대상
+                    # 캐시 유효 시간 내 반복 호출 시 토큰 비용 절감
+                    # 개발 테스트 호출 간격이 뜨문뜨문이라 5분 대신 1시간 TTL 설정
+                    # (실서비스 트래픽때는 5분 캐싱으로 바꾸는게 가격적 이득)
+                    system=[
+                        {
+                            "type": "text",
+                            "text": SYSTEM_PROMPT,
+                            "cache_control": {"type": "ephemeral", "ttl": "1h"},
+                        }
+                    ],
                     messages=[{"role": "user", "content": content}],
                 )
             except anthropic.AnthropicError as exc:
                 raise _map_error(exc) from exc
+
+            # 캐시 실제 히트 확인용 — cache_read면 캐시 탐, cache_creation이면 새로 씀
+            logger.warning( # 실서비스땐 info로 변경, logging.basicConfig(level=logging.INFO) 추가
+                "claude usage: input=%d cache_creation=%d cache_read=%d output=%d",
+                message.usage.input_tokens,
+                message.usage.cache_creation_input_tokens or 0,
+                message.usage.cache_read_input_tokens or 0,
+                message.usage.output_tokens,
+            )
 
             if message.stop_reason == "max_tokens":
                 raise AIAdapterError(

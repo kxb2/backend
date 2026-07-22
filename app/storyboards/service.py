@@ -1,7 +1,8 @@
 import logging
 
 from fastapi import UploadFile
-from sqlalchemy.orm import Session
+from sqlalchemy import text
+from sqlalchemy.orm import Session, joinedload
 
 from app.core import storage
 from app.core.constants import CUT_COUNT
@@ -10,10 +11,15 @@ from app.exports.models import Export
 from app.generations.models import Cut, Generation
 from app.regenerations.models import Regeneration
 from app.storyboards.models import ReferenceImage, Storyboard
+from app.storyboards.schemas import StoryboardListItem
 
 logger = logging.getLogger(__name__)
 
 MAX_REFERENCE_IMAGES = 10
+
+# 유저/인증 붙기 전까지 GET /storyboards가 전체를 무제한 노출하지 않도록 하드캡.
+# user_id가 생기면 이 캡보다 먼저 `WHERE user_id == current_user.id` 필터 추가하렴
+DEFAULT_LIST_LIMIT = 100
 
 
 class ReferenceImageLimitExceeded(Exception):
@@ -67,8 +73,14 @@ def create_storyboard(
 
     # R2 업로드 전에 전체 파일을 먼저 검증 (하나라도 형식/용량 문제면 업로드 자체를 하지 않음)
     reference_data = [(storage.validate_image(image), image.content_type) for image in reference_images]
+    # 레퍼런스 이미지 업로드 전에 리사이즈: 저장 용량/토큰 비용 ↓
+    reference_data = [
+        (storage.resize_reference_image(data, content_type), content_type)
+        for data, content_type in reference_data
+    ]
 
     storyboard = Storyboard(
+        title=_next_default_title(db),
         scenario_text=scenario_text,
         genre=genre,
         style=style,
@@ -106,6 +118,37 @@ def create_storyboard(
         raise
 
     return storyboard, generation
+
+
+def _next_default_title(db: Session) -> str:
+    """처음 제목 (임시: 전역 sequence) — 유저별 번호 붙기 전까지 "storyboard N" 형태로 부여.
+    DB SEQUENCE(storyboard_default_title_seq)에서 번호 발급받아서
+    동시 요청 와도 중복 안 되고, title 텍스트를 다시 파싱하지 않아
+    title을 자유롭게 수정해도 번호 로직에 영향 X (캔버스랑 독스트링내용 똑같음)"""
+    next_no = db.execute(text("SELECT nextval('storyboard_default_title_seq')")).scalar()
+    return f"storyboard {next_no}"
+
+
+def list_storyboards(db: Session, limit: int = DEFAULT_LIST_LIMIT) -> list[StoryboardListItem]:
+    """스토리보드 전체 목록(요약) 조회 — 최신 수정순, 최대 limit개"""
+    storyboards = (
+        db.query(Storyboard)
+        .options(joinedload(Storyboard.generation))
+        .order_by(Storyboard.updated_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [ # 응답: id, 제목, 장르(아이콘 같은거 추가할수도 잇지않을까해서), status, 생성/수정 날짜
+        StoryboardListItem(
+            id=sb.id,
+            title=sb.title,
+            genre=sb.genre,
+            status=sb.generation.status if sb.generation else None,
+            created_at=sb.created_at,
+            updated_at=sb.updated_at,
+        )
+        for sb in storyboards
+    ]
 
 
 def get_storyboard(db: Session, storyboard_id: int) -> Storyboard | None:

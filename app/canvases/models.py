@@ -29,6 +29,7 @@ class Canvas(Base):
     __tablename__ = "canvases"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str | None] = mapped_column(String(200))
     storyboard_id: Mapped[int | None] = mapped_column(
         ForeignKey("storyboards.id", ondelete="SET NULL"), nullable=True
     )

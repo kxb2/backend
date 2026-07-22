@@ -23,7 +23,7 @@ def create_canvas(request: CanvasCreateRequest, db: Session = Depends(get_db)) -
         canvas = service.create_canvas(db, request.storyboard_id)
     except service.StoryboardNotFound as exc:
         raise HTTPException(status_code=404, detail="storyboard not found") from exc
-    return CanvasCreateResponse(canvas_id=canvas.id)
+    return CanvasCreateResponse(canvas_id=canvas.id, title=canvas.title)
 
 
 @router.get("", response_model=list[CanvasListItem])

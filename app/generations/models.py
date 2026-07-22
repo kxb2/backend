@@ -26,6 +26,9 @@ class Generation(Base):
     status: Mapped[JobStatus] = mapped_column(_status_type, default=JobStatus.PENDING)
     grid_image_url: Mapped[str | None] = mapped_column(String(500))
     error_message: Mapped[str | None] = mapped_column(Text)
+    # 통합 프롬프트 글자수/형식 검증 실패로 재생성한 횟수 (1이 재시도 없는 정상).
+    # call_with_retry의 타임아웃 재시도와는 별개 — 이건 로그만
+    prompt_attempt_count: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
