@@ -101,10 +101,14 @@ def apply_integrated_prompt(db: Session, storyboard: Storyboard, integrated_prom
 
 
 # ====== 2. 오케스트레이션(9컷 생성 전반 과정)이 쓰는 헬퍼 함수들
-def _generate_and_apply_prompt(db: Session, storyboard: Storyboard, prompt_adapter: PromptAdapter) -> str | None:
+def _generate_and_apply_prompt(
+    db: Session, storyboard: Storyboard, prompt_adapter: PromptAdapter
+) -> tuple[str | None, int]:
     """Claude 호출 + 분리/검증. 형식이 이상하면 MAX_PROMPT_ATTEMPTS까지 새로 생성해서 재시도.
 
-    성공하면 None, MAX_PROMPT_ATTEMPTS까지 다 실패하면 마지막 시도의 에러 메시지를 반환(generation.error_message에 기록용).
+    반환: (에러 메시지, 실제 시도 횟수). 성공하면 에러는 None, 횟수는 1이 재시도 없는 첫 시도 성공 의미.
+    MAX_PROMPT_ATTEMPTS까지 다 실패: 마지막 시도의 에러 메시지 + MAX_PROMPT_ATTEMPTS 반환.
+    ㅡ DB로 재시도 여부나 횟수 확인하고 싶어서 추가.
     """
     last_error: str | None = None
     for attempt in range(1, MAX_PROMPT_ATTEMPTS + 1):
@@ -120,7 +124,7 @@ def _generate_and_apply_prompt(db: Session, storyboard: Storyboard, prompt_adapt
                 reference_image_urls=[ref.image_url for ref in storyboard.reference_images],
             )
             apply_integrated_prompt(db, storyboard, integrated_prompt)
-            return None
+            return None, attempt
         except (AIAdapterError, PromptValidationError) as exc:
             last_error = str(exc)
             logger.warning("통합 프롬프트 생성/검증 실패(시도 %d/%d): %s", attempt, MAX_PROMPT_ATTEMPTS, exc)
@@ -131,7 +135,7 @@ def _generate_and_apply_prompt(db: Session, storyboard: Storyboard, prompt_adapt
                     "실패한 통합 프롬프트 원문(시도 %d/%d):\n%s", attempt, MAX_PROMPT_ATTEMPTS, integrated_prompt
                 )
 
-    return last_error
+    return last_error, MAX_PROMPT_ATTEMPTS
 
 
 def _generate_one_cut_image(
@@ -244,7 +248,8 @@ def run_generation(storyboard_id: int) -> None:
         generation.status = JobStatus.PROCESSING
         db.commit()
 
-        prompt_error = _generate_and_apply_prompt(db, storyboard, ClaudePromptAdapter())
+        prompt_error, prompt_attempts = _generate_and_apply_prompt(db, storyboard, ClaudePromptAdapter())
+        generation.prompt_attempt_count = prompt_attempts
         if prompt_error is not None:
             for cut in storyboard.cuts:
                 cut.status = JobStatus.FAILED
