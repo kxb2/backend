@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
@@ -18,6 +18,7 @@ from app.storyboards.schemas import (
     ImageModel,
     StoryboardCreateResponse,
     StoryboardDetailResponse,
+    StoryboardListItem,
     StoryboardPromptResponse,
 )
 
@@ -71,8 +72,17 @@ def create_storyboard(
     return StoryboardCreateResponse(
         storyboard_id=storyboard.id,
         generation_id=generation.id,
+        title=storyboard.title,
         status=generation.status,
     )
+
+
+@router.get("", response_model=list[StoryboardListItem])
+def list_storyboards(
+    limit: int = Query(service.DEFAULT_LIST_LIMIT, ge=1, le=500), db: Session = Depends(get_db)
+) -> list[StoryboardListItem]:
+    """스토리보드 전체 목록(요약) 조회 — 최신 수정순, 최대 limit개"""
+    return service.list_storyboards(db, limit=limit)
 
 
 @router.get("/{storyboard_id}", response_model=StoryboardDetailResponse)

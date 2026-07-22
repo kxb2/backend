@@ -28,6 +28,7 @@ class CanvasCreateRequest(CamelModel):
 
 class CanvasCreateResponse(CamelModel):
     canvas_id: int
+    title: str | None
 
 
 class CanvasElementIn(CamelModel):
@@ -96,6 +97,7 @@ class CanvasConnectionOut(CamelModel):
 
 class CanvasDetailResponse(CamelModel):
     id: int
+    title: str | None
     storyboard_id: int | None
     elements: list[CanvasElementOut]
     connections: list[CanvasConnectionOut]
@@ -105,6 +107,7 @@ class CanvasDetailResponse(CamelModel):
 
 class CanvasListItem(CamelModel):
     id: int
+    title: str | None
     storyboard_id: int | None
     created_at: datetime
     updated_at: datetime
