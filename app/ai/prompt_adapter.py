@@ -24,47 +24,51 @@ logger = logging.getLogger(__name__)
 # 4인+4공간 테스트후 최대토큰값 늘림
 MAX_TOKENS = 4096
 
-# 장르별 기본 톤/스타일/9컷 앵글 시퀀스 — 일단 PRD 내용
-# ㅡ tone/style은 사용자가 고급설정에서 직접 지정하면 그게 우선, 안 넣으면 이 기본값 사용
-# ㅡ angles는 사용자가 직접 고르는 옵션이 아직 없어서 항상 적용(장르 고르면 그 시퀀스로 고정)
+# 장르별 프리셋: 기본 톤/스타일/앵글 (일단 PRD 내용)
+# ㅡ tone/style은 사용자가 고급설정에서 직접 지정하면 그게 우선/ 안 넣으면 기본값 사용
+# ㅡ 드라마류는 순서까지 주면 잘 따라하는데,
+#   액션/스릴러는 줘봤자 순서 무시해서 골라쓰라고 범위만 줌
 GENRE_PRESETS: dict[Genre, dict[str, object]] = {
     Genre.DRAMA: {
-        "tone": "따뜻함, 차분",
+        "tone": "warm, 차분",
         "style": "실사, 내추럴",
+        "angle_mode": "sequence",
         "angles": [
             "wide shot", "medium shot", "close-up", "close-up", "two-shot",
             "medium shot", "close-up", "wide shot", "medium shot",
         ],
     },
-    # 액션/스릴러는 기존 테스트 데이터 취합해서
-    # 클로드가 좋아하는 비슷한 단어 넣어줌 (단어를 안지킴)
     Genre.ACTION: {
-        "tone": "긴장, 강렬",
+        "tone": "cool, 긴장, 강렬",
         "style": "실사, 시네마틱",
+        "angle_mode": "pool",
         "angles": [
-            "wide shot", "low-angle", "tracking shot", "side-angle tracking shot", "close-up",
-            "high-angle", "low-angle", "wide shot", "medium shot",
+            "wide shot", "low-angle", "high-angle", "tracking shot",
+            "side-angle tracking shot", "close-up", "medium shot", "over-the-shoulder shot",
         ],
     },
     Genre.ROMANCE: {
-        "tone": "부드러움, 따뜻함",
+        "tone": "warm, 부드러움",
         "style": "소프트, 감성적",
+        "angle_mode": "sequence",
         "angles": [
             "wide shot", "two-shot", "close-up", "over-the-shoulder shot", "close-up",
             "wide shot", "two-shot", "close-up", "medium shot",
         ],
     },
     Genre.THRILLER: {
-        "tone": "어두움, 불안",
+        "tone": "cool, 어두움, 불안",
         "style": "로우키, 차가운 톤",
+        "angle_mode": "pool",
         "angles": [
-            "wide shot", "high-angle", "side-angle", "extreme close-up", "low-angle",
-            "eye-level", "high-angle", "wide shot", "close-up",
+            "wide shot", "high-angle", "low-angle", "side-angle",
+            "extreme close-up", "eye-level", "close-up", "medium shot",
         ],
     },
     Genre.COMEDY: {
-        "tone": "밝음, 경쾌함",
+        "tone": "warm, 밝음, 경쾌함",
         "style": "선명, 하이키",
+        "angle_mode": "sequence",
         "angles": [
             "wide shot", "medium shot", "close-up", "two-shot", "wide shot",
             "medium shot", "close-up", "high-angle", "wide shot",
@@ -119,11 +123,15 @@ Output format (strict):
   shots rather than risk going over.
 
 Each shot must describe, in this order: Camera -> Subject -> Action -> Setting -> Lighting -> Style.
-- Camera: the Settings block below specifies a REQUIRED angle type for each shot number (a genre
-  preset sequence) — use exactly that angle type for that shot number, never substitute a
-  different one. Still write an explicit camera position + the resulting visual effect (e.g.
-  required angle "low-angle" -> "low-angle, camera positioned near the ground looking upward,
-  subject appears imposing"). Never leave the angle vague or implicit.
+- Camera: the Settings block below gives the genre's camera angles in one of two forms.
+  If it's a REQUIRED angle type per shot number, use exactly that angle type for that shot
+  number, never substitute a different one. If it's instead a camera angle POOL (no per-shot
+  number attached), choose an angle from that pool for each shot based on what fits that shot's
+  narrative moment best, using a good variety across the 9 shots rather than repeating one
+  angle back to back — every shot's angle must still come from the given pool. Either way, always
+  write an explicit camera position + the resulting visual effect for whichever angle you use
+  (e.g. angle "low-angle" -> "low-angle, camera positioned near the ground looking upward, subject
+  appears imposing"). Never leave the angle vague or implicit.
 - Action: exactly one present-tense verb, one single action. If the action moves toward or away
   from a place, doorway, or object (entering, exiting, approaching, retreating), state that
   direction explicitly (e.g. "runs into the warehouse entrance", not just "runs") — an unstated
@@ -140,7 +148,13 @@ Each shot must describe, in this order: Camera -> Subject -> Action -> Setting -
 - Color: all 9 shots must share the exact same color treatment — full color by default. Never let
   a single shot go black-and-white/monochrome/sepia while the others stay in color, even when a
   mood/genre word (e.g. "noir") tempts you toward it. Only go fully black-and-white for every shot
-  together, and only if era/style explicitly requires it.
+  together, and only if era/style explicitly requires it. If the Settings block's Tone mentions a
+  light temperature ("warm" or "cool"), pick ONE specific lighting descriptor that fits this
+  scenario and conveys that temperature (it does not have to name a literal color — whatever
+  light quality reads as warm or cool for this scene/genre), then repeat that exact phrase
+  word-for-word in the Lighting portion of every one of the 9 shots — same mechanism as the
+  rendering-style tag below, never drift to a different temperature or a different-but-similar
+  phrase partway through.
 - Rendering style: decide on ONE single-word rendering-style tag up front based on the given
   style/genre/tone (e.g. "photorealistic", "cartoon", "anime" — one word, not a phrase). Default
   to "photorealistic" unless the scenario clearly calls for something else — a comedic/lighthearted
@@ -181,7 +195,8 @@ def _build_user_content(
     tone: str | None,
     aspect_ratio: str | None,
     era: str | None,
-    angle_sequence: list[str],
+    angle_mode: str,
+    angles: list[str],
     reference_image_urls: list[str],
 ) -> list[anthropic.types.TextBlockParam | anthropic.types.ImageBlockParam]:
     """Claude한테 보낼 사용자 메시지 내용"""
@@ -195,8 +210,16 @@ def _build_user_content(
     if aspect_ratio:
         settings_lines.append(f"Aspect ratio: {aspect_ratio}")
 
-    angle_list = ", ".join(f"Shot {i}: {angle}" for i, angle in enumerate(angle_sequence, start=1))
-    settings_lines.append(f"Required camera angle per shot (must follow exactly): {angle_list}")
+    if angle_mode == "sequence":
+        angle_list = ", ".join(f"Shot {i}: {angle}" for i, angle in enumerate(angles, start=1))
+        settings_lines.append(f"Required camera angle per shot (must follow exactly): {angle_list}")
+    else:
+        angle_pool = ", ".join(angles)
+        settings_lines.append(
+            f"Camera angle pool for this genre (pick freely across the 9 shots based on what "
+            f"fits each narrative beat — use a good variety, don't repeat the same one back to "
+            f"back, no fixed per-shot order required): {angle_pool}"
+        )
 
     text = f"Scenario:\n{scenario_text}\n\nSettings:\n" + "\n".join(settings_lines)
 
@@ -255,7 +278,8 @@ class ClaudePromptAdapter(PromptAdapter):
             tone=tone or preset["tone"],
             aspect_ratio=aspect_ratio,
             era=era,
-            angle_sequence=preset["angles"],
+            angle_mode=preset["angle_mode"],
+            angles=preset["angles"],
             reference_image_urls=reference_image_urls or [],
         )
 
