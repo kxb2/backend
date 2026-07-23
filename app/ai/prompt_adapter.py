@@ -170,10 +170,11 @@ class ClaudePromptAdapter(PromptAdapter):
         """테스트 때문에 client나 model이 없는 경우를 넣어놓음"""
         if client is None or model is None:
             settings = get_settings()
-            # SDK 자체 재시도 끄고 call_with_retry만 재시도하게 정리
-            # timeout 없어서 응답이 느려질 때 무기한 대기하는 문제 있었음(프론트에는 타임아웃 존재)
+            # SDK 자체 재시도 끄고 바깥쪽 3회 프롬프트 재생성
+            # 루프(_generate_and_apply_prompt)만 재시도 역할을 하게 정리
+            # call_with_retry 재시도 꺼놈 (프론트 300초 제한)
             client = client or anthropic.Anthropic(
-                api_key=settings.anthropic_api_key, timeout=30.0, max_retries=0
+                api_key=settings.anthropic_api_key, timeout=60.0, max_retries=0
             )
             model = model or settings.anthropic_model
         self._client = client
@@ -232,6 +233,13 @@ class ClaudePromptAdapter(PromptAdapter):
             )
 
             if message.stop_reason == "max_tokens":
+                # MAX_TOKENS 상한 조절 위해 추가
+                partial_text = "".join(block.text for block in message.content if block.type == "text")
+                logger.warning(
+                    "Claude 응답이 max_tokens(%d)에서 잘렸습니다 — 지금까지 생성된 부분:\n%s",
+                    MAX_TOKENS,
+                    partial_text,
+                )
                 raise AIAdapterError(
                     f"Claude 응답이 max_tokens({MAX_TOKENS})에서 잘렸습니다 — "
                     "프롬프트 길이 또는 MAX_TOKENS 조정이 필요합니다."
@@ -240,5 +248,5 @@ class ClaudePromptAdapter(PromptAdapter):
             return "".join(block.text for block in message.content if block.type == "text")
             # message.content 순회하면서 type이 text인 블록들의 텍스트만 이어붙여서 최종 문자열로 반환
 
-        return call_with_retry(_call, label="claude_prompt_adapter")
-        # call_with_retry 함수는 API 부를때마다 쓰이지만 반복(재시도) 동작은 문제 생겼을때만
+        # max_retries=0: 안쪽 재시도는 끄고 바깥쪽 3회 루프에게 재시도 전담
+        return call_with_retry(_call, label="claude_prompt_adapter", max_retries=0)
