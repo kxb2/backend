@@ -31,9 +31,9 @@ MAX_TOKENS = 4096
 # + 인물 일관성: 동일하진 못해도 등장인물의 간단한 특징을 고정문구로 지정 → 명사형 쉼표로 축소
 # + 인물 묘사를 반복해야 하는 이유도 추가(9컷이 서로 보지 못한다)
 # + 같은 장소면 건축적 디테일(벽/바닥/조명)도 유지하라고 추가
-# + 다음 샷이랑 카메라 앵글 안 겹치게(장르별 프리셋 전까지 가벼운 조치)
 # + 화풍 일관성: 실사와 카툰이 섞여 나오는 버그 있었음 → 명사형 고정 추가
 # + 화풍 기본값: style 없으면 photorealistic 기본(임시) → style enum 생각중
+# + 소품, 의상(상하의) 고정문구 추가
 # + 아직 미확정 추후 기능: 장르별 프리셋, 고급설정 → 넣게되면 프롬프트 수정필요
 
 SYSTEM_PROMPT = """You are a cinematography prompt writer for an AI storyboard tool.
@@ -84,10 +84,14 @@ Each shot must describe, in this order: Camera -> Subject -> Action -> Setting -
   style than the rest.
 - Character consistency is required in every case, not only when reference images are provided:
   if the scenario names or clearly identifies any character(s), the first time each character
-  appears, establish their key visible traits (approximate age, hair, outfit, distinguishing
-  features) in a SHORT fixed phrase of 5-6 words MAXIMUM — a comma-separated tag list, not a full
-  descriptive clause (e.g. "mid-30s, short black hair, gray jacket", NOT "a mid-30s man with short
-  black hair and a gray running jacket"). Then repeat that EXACT SAME short phrase word-for-word
+  appears, establish their key visible traits (approximate age, hair, FULL outfit, distinguishing
+  features) in a SHORT fixed phrase of 6-8 words MAXIMUM — a comma-separated tag list, not a full
+  descriptive clause (e.g. "mid-30s, short black hair, gray jacket, dark jeans", NOT "a mid-30s man
+  with short black hair and a gray running jacket"). The outfit portion must cover the character's
+  ENTIRE visible outfit — top AND bottom (e.g. shirt AND pants/shorts/skirt) — not just one
+  garment: leaving any visible garment unspecified lets each isolated shot invent a different one
+  (this is exactly how a character ends up in long pants in one shot and shorts in the next). Then
+  repeat that EXACT SAME short phrase word-for-word
   every time that character appears in a later shot — do not paraphrase or vary the wording even
   slightly (e.g. "dark trench coat" must not later become "black coat" or "long coat"). Identical
   wording across shots is required, not just similar meaning. This phrase repeats up to 9 times

@@ -2,7 +2,12 @@ import anthropic
 import httpx
 import pytest
 
-from app.ai.exceptions import AIAdapterError, AIAdapterRequestError, AIAdapterUnavailableError
+from app.ai.exceptions import (
+    AIAdapterError,
+    AIAdapterRequestError,
+    AIAdapterTimeoutError,
+    AIAdapterUnavailableError,
+)
 from app.ai.prompt_adapter import ClaudePromptAdapter
 from app.core.enums import Genre
 
@@ -14,10 +19,19 @@ class _FakeTextBlock:
         self.text = text
 
 
+class _FakeUsage:
+    def __init__(self):
+        self.input_tokens = 10
+        self.output_tokens = 10
+        self.cache_creation_input_tokens = 0
+        self.cache_read_input_tokens = 0
+
+
 class _FakeMessage:
     def __init__(self, text, stop_reason="end_turn"):
         self.content = [_FakeTextBlock(text)]
         self.stop_reason = stop_reason
+        self.usage = _FakeUsage()
 
 
 class _FakeMessages:
@@ -92,21 +106,26 @@ def test_attaches_reference_images_as_url_blocks():
     assert image_blocks[0]["source"] == {"type": "url", "url": "https://pub-x.r2.dev/a.png"}
 
 
-def test_timeout_is_retried_then_succeeds():
-    """타임아웃 나면 재시도해서 결국 성공하는지 (호출 2회)"""
+def test_timeout_is_not_retried_at_adapter_level():
+    """어댑터 레벨(call_with_retry)은 max_retries=0이라 타임아웃 나면 재시도 없이 즉시
+    실패하는지 (호출 1회) — 실제 재시도는 generations.service의 바깥쪽 3회 루프가 담당"""
     request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
-    adapter, client = _adapter([anthropic.APITimeoutError(request=request), _FakeMessage("recovered")])
+    adapter, client = _adapter([anthropic.APITimeoutError(request=request)])
 
-    assert adapter.generate_prompt(scenario_text="s", genre=Genre.COMEDY) == "recovered"
-    assert len(client.messages.calls) == 2
+    with pytest.raises(AIAdapterTimeoutError):
+        adapter.generate_prompt(scenario_text="s", genre=Genre.COMEDY)
+
+    assert len(client.messages.calls) == 1
 
 
-def test_rate_limit_is_retryable():
-    """429(너무 많은 요청)도 재시도 대상인지 (호출 2회)"""
-    adapter, client = _adapter([_status_error(anthropic.RateLimitError, 429), _FakeMessage("recovered")])
+def test_rate_limit_is_not_retried_at_adapter_level():
+    """429(너무 많은 요청)도 max_retries=0이라 재시도 없이 즉시 실패하는지 (호출 1회)"""
+    adapter, client = _adapter([_status_error(anthropic.RateLimitError, 429)])
 
-    assert adapter.generate_prompt(scenario_text="s", genre=Genre.THRILLER) == "recovered"
-    assert len(client.messages.calls) == 2
+    with pytest.raises(AIAdapterUnavailableError):
+        adapter.generate_prompt(scenario_text="s", genre=Genre.THRILLER)
+
+    assert len(client.messages.calls) == 1
 
 
 def test_bad_request_is_not_retried():
@@ -119,15 +138,14 @@ def test_bad_request_is_not_retried():
     assert len(client.messages.calls) == 1
 
 
-def test_exhausting_retries_raises_unavailable_error():
-    """503(서버 과부하, 점검)이 계속되면 재시도 다 쓰고 에러 전파되는지 (호출 3회)"""
-    responses = [_status_error(anthropic.APIStatusError, 503) for _ in range(3)]
-    adapter, client = _adapter(responses)
+def test_server_error_is_not_retried_at_adapter_level():
+    """503(서버 과부하, 점검)도 max_retries=0이라 재시도 없이 즉시 에러 전파되는지 (호출 1회)"""
+    adapter, client = _adapter([_status_error(anthropic.APIStatusError, 503)])
 
     with pytest.raises(AIAdapterUnavailableError):
         adapter.generate_prompt(scenario_text="s", genre=Genre.ACTION)
 
-    assert len(client.messages.calls) == 3
+    assert len(client.messages.calls) == 1
 
 
 def test_raises_when_response_is_truncated_by_max_tokens():
