@@ -21,7 +21,8 @@ from app.core.enums import Genre
 logger = logging.getLogger(__name__)
 
 # 테스트에서 응답이 중간에 잘려서(stop_reason=max_tokens) 재시도 낭비된 사례 있어서 상향
-MAX_TOKENS = 2500
+# 인물/장소가 많은 시나리오(4인+4공간)에서도 2500으론 부족해서 재상향
+MAX_TOKENS = 4096
 
 # 기본적으로 PRD 문서에서 뽑아낸 규칙들 영문으로 넣어놓음
 # + 글자수: 전체 3000자 하드 리밋 + 샷당 240자(샷당 제한 조절 테스트중)
@@ -52,9 +53,7 @@ Output format (strict):
 Each shot must describe, in this order: Camera -> Subject -> Action -> Setting -> Lighting -> Style.
 - Camera: an explicit angle name + camera position + the resulting visual effect
   (e.g. "low-angle, camera positioned near the ground looking upward, subject appears imposing").
-  Never leave the angle vague or implicit. Avoid repeating the exact same angle in two
-  immediately consecutive shots so the sequence doesn't feel visually repetitive — reusing an
-  angle after a gap of a shot or two is fine if the moment calls for it.
+  Never leave the angle vague or implicit.
 - Action: exactly one present-tense verb, one single action.
 - Do not use abstract mood words (e.g. "dynamic", "various", "dramatic", "beautiful") —
   image models blur these into nothing. Describe concrete, visible details instead.
@@ -102,6 +101,14 @@ Each shot must describe, in this order: Camera -> Subject -> Action -> Setting -
   random-looking person. Naming a character is NEVER a substitute for repeating their trait
   phrase — every shot that character appears in, however minor their role in that shot, must
   still carry the full phrase.
+- Costume/prop consistency follows the exact same rule as character traits: any named recurring
+  prop, vehicle, or a character's outfit must stay identical every time it appears. The first
+  time it appears, fix it with a short phrase (e.g. "red motorcycle", "green backpack"), then
+  repeat that exact phrase word-for-word in every later shot it appears in — never substitute a
+  different but similar item (e.g. a motorcycle must not become a bicycle, a jacket must not
+  change color) unless the scenario explicitly describes a change (e.g. "after changing
+  clothes"). Same reason as character traits: each shot is generated in isolation, so only exact
+  repetition keeps it consistent.
 - If reference images are provided, ground that same consistency in what is actually shown in
   those images (appearance, background, props) instead of inventing new traits.
 - Location/setting consistency: if multiple shots take place in or around the same physical
@@ -163,7 +170,11 @@ class ClaudePromptAdapter(PromptAdapter):
         """테스트 때문에 client나 model이 없는 경우를 넣어놓음"""
         if client is None or model is None:
             settings = get_settings()
-            client = client or anthropic.Anthropic(api_key=settings.anthropic_api_key)
+            # SDK 자체 재시도 끄고 call_with_retry만 재시도하게 정리
+            # timeout 없어서 응답이 느려질 때 무기한 대기하는 문제 있었음(프론트에는 타임아웃 존재)
+            client = client or anthropic.Anthropic(
+                api_key=settings.anthropic_api_key, timeout=30.0, max_retries=0
+            )
             model = model or settings.anthropic_model
         self._client = client
         self._model = model
