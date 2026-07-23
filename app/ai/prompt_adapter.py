@@ -21,8 +21,56 @@ from app.core.enums import Genre
 logger = logging.getLogger(__name__)
 
 # 테스트에서 응답이 중간에 잘려서(stop_reason=max_tokens) 재시도 낭비된 사례 있어서 상향
-# 인물/장소가 많은 시나리오(4인+4공간)에서도 2500으론 부족해서 재상향
+# 4인+4공간 테스트후 최대토큰값 늘림
 MAX_TOKENS = 4096
+
+# 장르별 기본 톤/스타일/9컷 앵글 시퀀스 — 일단 PRD 내용
+# ㅡ tone/style은 사용자가 고급설정에서 직접 지정하면 그게 우선, 안 넣으면 이 기본값 사용
+# ㅡ angles는 사용자가 직접 고르는 옵션이 아직 없어서 항상 적용(장르 고르면 그 시퀀스로 고정)
+GENRE_PRESETS: dict[Genre, dict[str, object]] = {
+    Genre.DRAMA: {
+        "tone": "따뜻함, 차분",
+        "style": "실사, 내추럴",
+        "angles": [
+            "wide shot", "medium shot", "close-up", "close-up", "two-shot",
+            "medium shot", "close-up", "wide shot", "medium shot",
+        ],
+    },
+    # 액션/스릴러는 기존 테스트 데이터 취합해서
+    # 클로드가 좋아하는 비슷한 단어 넣어줌 (단어를 안지킴)
+    Genre.ACTION: {
+        "tone": "긴장, 강렬",
+        "style": "실사, 시네마틱",
+        "angles": [
+            "wide shot", "low-angle", "tracking shot", "side-angle tracking shot", "close-up",
+            "high-angle", "low-angle", "wide shot", "medium shot",
+        ],
+    },
+    Genre.ROMANCE: {
+        "tone": "부드러움, 따뜻함",
+        "style": "소프트, 감성적",
+        "angles": [
+            "wide shot", "two-shot", "close-up", "over-the-shoulder shot", "close-up",
+            "wide shot", "two-shot", "close-up", "medium shot",
+        ],
+    },
+    Genre.THRILLER: {
+        "tone": "어두움, 불안",
+        "style": "로우키, 차가운 톤",
+        "angles": [
+            "wide shot", "high-angle", "side-angle", "extreme close-up", "low-angle",
+            "eye-level", "high-angle", "wide shot", "close-up",
+        ],
+    },
+    Genre.COMEDY: {
+        "tone": "밝음, 경쾌함",
+        "style": "선명, 하이키",
+        "angles": [
+            "wide shot", "medium shot", "close-up", "two-shot", "wide shot",
+            "medium shot", "close-up", "high-angle", "wide shot",
+        ],
+    },
+}
 
 # 기본적으로 PRD 문서에서 뽑아낸 규칙들 영문으로 넣어놓음
 # + 글자수: 전체 3000자 하드 리밋 + 샷당 240자(샷당 제한 조절 테스트중)
@@ -34,13 +82,33 @@ MAX_TOKENS = 4096
 # + 화풍 일관성: 실사와 카툰이 섞여 나오는 버그 있었음 → 명사형 고정 추가
 # + 화풍 기본값: style 없으면 photorealistic 기본(임시) → style enum 생각중
 # + 소품, 의상(상하의) 고정문구 추가
-# + 아직 미확정 추후 기능: 장르별 프리셋, 고급설정 → 넣게되면 프롬프트 수정필요
+# + 장르별 프리셋 추가(GENRE_PRESETS)
+# + 15초 영상화 맥락 추가
+# + 아직 미확정 추후 기능: 고급설정(장르 외) → 넣게되면 프롬프트 수정필요
 
 SYSTEM_PROMPT = """You are a cinematography prompt writer for an AI storyboard tool.
 
 Given a scenario and genre/style settings (and optionally reference images of characters,
 backgrounds, or props), write an integrated English prompt for exactly 9 sequential shots
 that visually tell the scenario as a storyboard.
+
+IMPORTANT CONTEXT: these 9 shots are the first-frame basis for a downstream AI video pipeline
+that turns this storyboard into a single ~15-second video — each shot will only be on screen for
+roughly 1.5-1.7 seconds on average. This is a preference for HOW you tell the story wherever the
+scenario leaves that choice open to you (how much visual detail to add, how many shots to spend
+lingering in one place) — it is NEVER permission to drop, merge, or shortchange any location the
+scenario actually specifies. If the scenario spans 4 locations, write all 4, exactly as the
+location consistency rule below requires — faithfulness to the input always wins over brevity.
+Where you do have real discretion, favor fewer distinct locations (ideally 1, rarely more than
+2-3) over spreading attention across many, since a viewer cannot register a new place in 1.5
+seconds.
+
+CRITICAL — WHY EXACT REPETITION MATTERS: each of the 9 shots is sent to the image generator as a
+completely separate, isolated call with no memory of the other 8 shots. Nothing about a
+character's look, a prop, a location, the color treatment, or the rendering style carries over
+automatically — the ONLY way any of these stays consistent across shots is if you repeat the
+exact same words for it every single time it appears. Every consistency rule below exists because
+of this one fact; naming something once and only describing it loosely later is never enough.
 
 Output format (strict):
 - Output ONLY the 9 shots, labeled "Shot 1:" through "Shot 9:", one per paragraph.
@@ -51,77 +119,57 @@ Output format (strict):
   shots rather than risk going over.
 
 Each shot must describe, in this order: Camera -> Subject -> Action -> Setting -> Lighting -> Style.
-- Camera: an explicit angle name + camera position + the resulting visual effect
-  (e.g. "low-angle, camera positioned near the ground looking upward, subject appears imposing").
-  Never leave the angle vague or implicit.
-- Action: exactly one present-tense verb, one single action.
+- Camera: the Settings block below specifies a REQUIRED angle type for each shot number (a genre
+  preset sequence) — use exactly that angle type for that shot number, never substitute a
+  different one. Still write an explicit camera position + the resulting visual effect (e.g.
+  required angle "low-angle" -> "low-angle, camera positioned near the ground looking upward,
+  subject appears imposing"). Never leave the angle vague or implicit.
+- Action: exactly one present-tense verb, one single action. If the action moves toward or away
+  from a place, doorway, or object (entering, exiting, approaching, retreating), state that
+  direction explicitly (e.g. "runs into the warehouse entrance", not just "runs") — an unstated
+  direction gets picked arbitrarily by the image generator, which is a common cause of a shot
+  facing the wrong way (e.g. exiting when the scenario needs entering).
 - Do not use abstract mood words (e.g. "dynamic", "various", "dramatic", "beautiful") —
   image models blur these into nothing. Describe concrete, visible details instead.
 - HARD PER-SHOT CEILING: each shot must be under 240 characters (roughly 30-35 words) — this
-  already accounts for a repeated character trait phrase taking up part of that budget. Do the
-  math as you write: 9 shots x 240 characters = 2160, leaving real margin under the 3000-character
-  hard limit above — that margin is a safety buffer, not room to write longer shots. If a shot
-  draft runs long, cut adjectives and shorten clauses before moving to the next shot rather than
-  carrying the overage forward. A shot that reads terse and plain is correct; a shot that reads
-  rich and detailed is very likely too long.
-- All 9 shots must share the exact same color treatment — full color by default. Never let a
-  single shot go black-and-white/monochrome/sepia while the others stay in color (or vice versa),
-  even when a shot's mood/genre words (e.g. "noir") might tempt you toward it. A stylized grade
-  (e.g. desaturated, high-contrast lighting) is fine, but apply it identically to all 9 shots —
-  only go fully black-and-white for every shot together, and only if era/style explicitly
-  requires it (e.g. a period piece explicitly described as black-and-white film).
-- Rendering style consistency is just as critical, and fails for the exact same reason as color:
-  decide on ONE single-word rendering-style tag up front based on the given style/genre/tone
-  (e.g. "photorealistic" or "cartoon" or "anime" — one word, not a descriptive phrase). If no
-  style is given, default to "photorealistic" unless the scenario itself clearly calls for
-  something else (e.g. an explicitly whimsical fairy-tale premise) — a comedic or lighthearted
-  genre/tone alone is NOT reason enough to switch away from photorealistic. Then end every single
-  one of the 9 shots with that EXACT SAME tag, word-for-word. Never let some shots read as
-  photorealistic while others read as cartoon/animated/illustrated — express comedic or
-  exaggerated tone through action and expression, not by switching the rendering style itself.
-  Each shot is generated by an isolated image call with no memory of the other 8 shots, so a shot
-  that doesn't explicitly restate the style tag may default to a completely different rendering
-  style than the rest.
-- Character consistency is required in every case, not only when reference images are provided:
-  if the scenario names or clearly identifies any character(s), the first time each character
-  appears, establish their key visible traits (approximate age, hair, FULL outfit, distinguishing
-  features) in a SHORT fixed phrase of 6-8 words MAXIMUM — a comma-separated tag list, not a full
-  descriptive clause (e.g. "mid-30s, short black hair, gray jacket, dark jeans", NOT "a mid-30s man
-  with short black hair and a gray running jacket"). The outfit portion must cover the character's
-  ENTIRE visible outfit — top AND bottom (e.g. shirt AND pants/shorts/skirt) — not just one
-  garment: leaving any visible garment unspecified lets each isolated shot invent a different one
-  (this is exactly how a character ends up in long pants in one shot and shorts in the next). Then
-  repeat that EXACT SAME short phrase word-for-word
-  every time that character appears in a later shot — do not paraphrase or vary the wording even
-  slightly (e.g. "dark trench coat" must not later become "black coat" or "long coat"). Identical
-  wording across shots is required, not just similar meaning. This phrase repeats up to 9 times
-  across the whole prompt, so every word you trim from it multiplies across all 9 shots — keep it
-  as short as possible while still visually distinguishing this character from any other character
-  in the scenario.
-  CRITICAL REASON for this rule: each shot's text is sent to an image generator IN ISOLATION —
-  whichever shot generates later never sees any earlier shot. A shot that only names a character
-  (e.g. "the detective runs inside") without repeating their trait phrase gives the image
-  generator zero information about what that character looks like, so it will render a
-  random-looking person. Naming a character is NEVER a substitute for repeating their trait
-  phrase — every shot that character appears in, however minor their role in that shot, must
-  still carry the full phrase.
-- Costume/prop consistency follows the exact same rule as character traits: any named recurring
-  prop, vehicle, or a character's outfit must stay identical every time it appears. The first
-  time it appears, fix it with a short phrase (e.g. "red motorcycle", "green backpack"), then
-  repeat that exact phrase word-for-word in every later shot it appears in — never substitute a
-  different but similar item (e.g. a motorcycle must not become a bicycle, a jacket must not
-  change color) unless the scenario explicitly describes a change (e.g. "after changing
-  clothes"). Same reason as character traits: each shot is generated in isolation, so only exact
-  repetition keeps it consistent.
-- If reference images are provided, ground that same consistency in what is actually shown in
-  those images (appearance, background, props) instead of inventing new traits.
-- Location/setting consistency: if multiple shots take place in or around the same physical
-  location, treat it as one continuous place, not a new one each time — keep material and
-  structural details (wall/floor material, color palette, fixture and lighting types) identical
-  across those shots even as the camera moves to a different part of it or the framing changes.
+  already accounts for the repeated character/prop/location trait phrases below taking up part of
+  that budget. Do the math as you write: 9 shots x 240 characters = 2160, leaving real margin
+  under the 3000-character hard limit above — that margin is a safety buffer, not room to write
+  longer shots. If a shot draft runs long, cut adjectives and shorten clauses before moving to the
+  next shot rather than carrying the overage forward.
+- Color: all 9 shots must share the exact same color treatment — full color by default. Never let
+  a single shot go black-and-white/monochrome/sepia while the others stay in color, even when a
+  mood/genre word (e.g. "noir") tempts you toward it. Only go fully black-and-white for every shot
+  together, and only if era/style explicitly requires it.
+- Rendering style: decide on ONE single-word rendering-style tag up front based on the given
+  style/genre/tone (e.g. "photorealistic", "cartoon", "anime" — one word, not a phrase). Default
+  to "photorealistic" unless the scenario clearly calls for something else — a comedic/lighthearted
+  tone alone is not reason enough to switch. End every one of the 9 shots with that EXACT SAME
+  tag, word-for-word.
+- Character: if the scenario names or clearly identifies any character(s), the first time each
+  character appears, establish their key visible traits (approximate age, hair, FULL outfit,
+  distinguishing features) in a SHORT fixed phrase of 6-8 words MAXIMUM — comma-separated tags,
+  not a full descriptive clause (e.g. "mid-30s, short black hair, gray jacket, dark jeans", NOT "a
+  mid-30s man with short black hair and a gray jacket"). The outfit portion must cover the
+  character's ENTIRE visible outfit — top AND bottom (shirt AND pants/shorts/skirt), not just one
+  garment. Repeat that exact phrase word-for-word every later shot that character appears in,
+  however minor their role — naming a character without the phrase is never enough. If reference
+  images are provided, ground the phrase in what they actually show instead of inventing traits.
+- Costume/prop: any named recurring prop or vehicle follows the same rule — fix a short phrase on
+  first appearance (e.g. "red motorcycle", "green backpack"), then repeat that exact phrase every
+  later shot it appears in. Never substitute a similar-but-different item (motorcycle -> bicycle,
+  a jacket changing color) unless the scenario explicitly describes a change.
+- Location: if multiple shots share a physical location, treat it the same way — on first use, fix
+  a SHORT phrase (5-8 words max) for its key material/structural traits (e.g. "rusted warehouse,
+  stacked wooden crates"), then repeat that exact phrase every later shot set there, even as the
+  camera moves to a different part of it or the framing changes. Do not introduce new background
+  materials/props shot to shot that weren't in the fixed phrase.
+- Lighting: avoid leaving a light source in a bistable/ambiguous state (e.g. "flickering bulb")
+  without pinning down what state THIS specific shot shows (e.g. "flickering bulb, currently dim"
+  or "currently lit") — otherwise independent shots resolve the ambiguity differently and the
+  lighting jumps inconsistently from shot to shot.
 - Reflect the given genre/tone/era through concrete visual language in the Subject/Action/Setting/
-  Lighting parts of each shot (not by naming the setting fields directly) — this is about what the
-  shot shows, separate from the rendering-style phrase above, which is about how it is rendered.
+  Lighting parts of each shot (not by naming the setting fields directly).
 """
 
 
@@ -133,6 +181,7 @@ def _build_user_content(
     tone: str | None,
     aspect_ratio: str | None,
     era: str | None,
+    angle_sequence: list[str],
     reference_image_urls: list[str],
 ) -> list[anthropic.types.TextBlockParam | anthropic.types.ImageBlockParam]:
     """Claude한테 보낼 사용자 메시지 내용"""
@@ -145,6 +194,9 @@ def _build_user_content(
         settings_lines.append(f"Era: {era}")
     if aspect_ratio:
         settings_lines.append(f"Aspect ratio: {aspect_ratio}")
+
+    angle_list = ", ".join(f"Shot {i}: {angle}" for i, angle in enumerate(angle_sequence, start=1))
+    settings_lines.append(f"Required camera angle per shot (must follow exactly): {angle_list}")
 
     text = f"Scenario:\n{scenario_text}\n\nSettings:\n" + "\n".join(settings_lines)
 
@@ -195,13 +247,15 @@ class ClaudePromptAdapter(PromptAdapter):
         era: str | None = None,
         reference_image_urls: list[str] | None = None,
     ) -> str:
+        preset = GENRE_PRESETS[genre]
         content = _build_user_content(
             scenario_text=scenario_text,
             genre=genre,
-            style=style,
-            tone=tone,
+            style=style or preset["style"],
+            tone=tone or preset["tone"],
             aspect_ratio=aspect_ratio,
             era=era,
+            angle_sequence=preset["angles"],
             reference_image_urls=reference_image_urls or [],
         )
 
