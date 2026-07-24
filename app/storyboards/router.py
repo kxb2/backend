@@ -86,9 +86,9 @@ def list_storyboards(
 
 
 @router.get("/{storyboard_id}", response_model=StoryboardDetailResponse)
-def get_storyboard(storyboard_id: int, db: Session = Depends(get_db)):
-    """스토리보드 조회"""
-    storyboard = service.get_storyboard(db, storyboard_id)
+def get_storyboard(storyboard_id: int, db: Session = Depends(get_db)) -> StoryboardDetailResponse:
+    """스토리보드 조회 (9컷 생성 결과 포함)"""
+    storyboard = service.get_storyboard_detail(db, storyboard_id)
     if storyboard is None:
         raise HTTPException(status_code=404, detail="storyboard not found")
     return storyboard
