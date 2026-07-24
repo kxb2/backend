@@ -100,7 +100,10 @@ class GptImageAdapter(ImageAdapter):
     def __init__(self, client: openai.OpenAI | None = None, model: str | None = None) -> None:
         if client is None or model is None:
             settings = get_settings()
-            client = client or openai.OpenAI(api_key=settings.openai_api_key)
+            # SDK 자체 재시도 끄고 call_with_retry만 재시도하게 정리(prompt와 함께 timeout 지정)
+            client = client or openai.OpenAI(
+                api_key=settings.openai_api_key, timeout=90.0, max_retries=0
+            )
             model = model or settings.openai_image_model
         self._client = client
         self._model = model
@@ -125,14 +128,18 @@ class GptImageAdapter(ImageAdapter):
             image_bytes = base64.b64decode(b64_data)
             return storage.upload_image_bytes(image_bytes, content_type="image/png", folder=IMAGE_FOLDER)
 
-        return call_with_retry(_call, label="gpt_image_adapter")
+        # 이미지 생성 timeout 90초/ 재시도 0/ 프론트 컷 재생성 120초
+        return call_with_retry(_call, label="gpt_image_adapter", max_retries=0)
 
 
 class GeminiImageAdapter(ImageAdapter):
     def __init__(self, client: genai.Client | None = None, model: str | None = None) -> None:
         if client is None or model is None:
             settings = get_settings()
-            client = client or genai.Client(api_key=settings.gemini_api_key)
+            client = client or genai.Client(
+                api_key=settings.gemini_api_key,
+                http_options=genai_types.HttpOptions(timeout=90_000),  # 90초
+            )
             model = model or settings.gemini_image_model
         self._client = client
         self._model = model
@@ -170,7 +177,8 @@ class GeminiImageAdapter(ImageAdapter):
 
             raise AIAdapterError("Gemini image 응답에 이미지 데이터가 없습니다.")
 
-        return call_with_retry(_call, label="gemini_image_adapter")
+        # 재시도 0인 이유 gpt랑 동일
+        return call_with_retry(_call, label="gemini_image_adapter", max_retries=0)
 
 
 def get_image_adapter(image_model: ImageModel) -> ImageAdapter:
