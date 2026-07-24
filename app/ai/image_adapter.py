@@ -9,7 +9,7 @@ from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 import httpx
 
-from app.ai.base import ImageAdapter
+from app.ai.base import GeneratedImage, ImageAdapter
 from app.ai.exceptions import (
     RETRYABLE_STATUS_CODES,
     AIAdapterError,
@@ -47,6 +47,14 @@ _GPT_SQUARE_SIZE = "1024x1024"
 
 _GEMINI_DEFAULT_ASPECT_RATIO = "3:2"
 
+# 레퍼런스 있을 때만 프롬프트 앞에 붙이는 사용 지침 — edit/멀티모달이 사진 속 무관한 소품·구도까지
+# 그대로 베끼는 경향(앵커링)을 완화하려는 목적. cut.prompt_text 자체는 안 바뀌고 호출 시점에만 붙음.
+REFERENCE_USAGE_INSTRUCTION = (
+    "Use the attached reference images ONLY for the appearance of the specific "
+    "character/object/place each one depicts. The scene, location, layout, and "
+    "camera angle must follow the written prompt below, not the reference images.\n\n"
+)
+
 
 def _gpt_size_for_aspect_ratio(aspect_ratio: str | None) -> str:
     """"16:9" 같은 화면비 문자열 → gpt-image-1이 받는 size 문자열로 변환.
@@ -68,7 +76,6 @@ def _gpt_size_for_aspect_ratio(aspect_ratio: str | None) -> str:
             else:
                 size = _GPT_SQUARE_SIZE
 
-    logger.info("requested %s, using %s", aspect_ratio, size)
     return size
 
 
@@ -108,16 +115,40 @@ class GptImageAdapter(ImageAdapter):
         self._client = client
         self._model = model
 
-    def generate_image(self, *, prompt_text: str, aspect_ratio: str | None = None) -> str:
-        def _call() -> str:
+    def generate_image(
+        self,
+        *,
+        prompt_text: str,
+        aspect_ratio: str | None = None,
+        reference_images: list[tuple[bytes, str]] | None = None,
+    ) -> GeneratedImage:
+        size = _gpt_size_for_aspect_ratio(aspect_ratio)
+        logger.info("requested %s, using %s, reference_count=%d", aspect_ratio, size, len(reference_images or []))
+
+        def _call() -> GeneratedImage:
             try:
-                response = self._client.images.generate(
-                    model=self._model,
-                    prompt=prompt_text,
-                    size=_gpt_size_for_aspect_ratio(aspect_ratio),
-                    n=1,
-                    output_format="png",
-                )
+                if reference_images:
+                    # 레퍼런스 있음: 실물 이미지를 image-to-image로 직접 전달(images.edit)
+                    images = [
+                        (f"reference_{i}.{storage.CONTENT_TYPE_EXT.get(content_type, 'bin')}", data, content_type)
+                        for i, (data, content_type) in enumerate(reference_images)
+                    ]
+                    response = self._client.images.edit(
+                        model=self._model,
+                        image=images,
+                        prompt=REFERENCE_USAGE_INSTRUCTION + prompt_text,
+                        size=size,
+                        n=1,
+                        output_format="png",
+                    )
+                else:
+                    response = self._client.images.generate(
+                        model=self._model,
+                        prompt=prompt_text,
+                        size=size,
+                        n=1,
+                        output_format="png",
+                    )
             except openai.OpenAIError as exc:
                 raise _map_openai_error(exc) from exc
 
@@ -126,7 +157,8 @@ class GptImageAdapter(ImageAdapter):
                 raise AIAdapterError("GPT image 응답에 이미지 데이터(b64_json)가 없습니다.")
 
             image_bytes = base64.b64decode(b64_data)
-            return storage.upload_image_bytes(image_bytes, content_type="image/png", folder=IMAGE_FOLDER)
+            url = storage.upload_image_bytes(image_bytes, content_type="image/png", folder=IMAGE_FOLDER)
+            return GeneratedImage(url=url, data=image_bytes, content_type="image/png")
 
         # 이미지 생성 timeout 90초/ 재시도 0/ 프론트 컷 재생성 120초
         return call_with_retry(_call, label="gpt_image_adapter", max_retries=0)
@@ -144,21 +176,39 @@ class GeminiImageAdapter(ImageAdapter):
         self._client = client
         self._model = model
 
-    def generate_image(self, *, prompt_text: str, aspect_ratio: str | None = None) -> str:
+    def generate_image(
+        self,
+        *,
+        prompt_text: str,
+        aspect_ratio: str | None = None,
+        reference_images: list[tuple[bytes, str]] | None = None,
+    ) -> GeneratedImage:
         # aspect_ratio 없으면 기본값 지정(GPT 기본값과 동일한 3:2)
         resolved_aspect_ratio = aspect_ratio or _GEMINI_DEFAULT_ASPECT_RATIO
-        logger.info("requested %s, using %s", aspect_ratio, resolved_aspect_ratio)
+        logger.info(
+            "requested %s, using %s, reference_count=%d",
+            aspect_ratio, resolved_aspect_ratio, len(reference_images or []),
+        )
         image_config = genai_types.ImageConfig(aspect_ratio=resolved_aspect_ratio)
         config = genai_types.GenerateContentConfig(
             response_modalities=["IMAGE"],
             image_config=image_config,
         )
 
-        def _call() -> str:
+        if reference_images:
+            # 레퍼런스 있음: 실물 이미지를 텍스트 프롬프트와 함께 멀티모달 입력으로 전달
+            contents = [
+                genai_types.Part.from_bytes(data=data, mime_type=content_type)
+                for data, content_type in reference_images
+            ] + [REFERENCE_USAGE_INSTRUCTION + prompt_text]
+        else:
+            contents = prompt_text
+
+        def _call() -> GeneratedImage:
             try:
                 response = self._client.models.generate_content(
                     model=self._model,
-                    contents=prompt_text,
+                    contents=contents,
                     config=config,
                 )
             except (genai_errors.APIError, httpx.TimeoutException, httpx.TransportError) as exc:
@@ -169,11 +219,10 @@ class GeminiImageAdapter(ImageAdapter):
             parts = content.parts if content and content.parts else []
             for part in parts:
                 if part.inline_data and part.inline_data.data:
-                    return storage.upload_image_bytes(
-                        part.inline_data.data,
-                        content_type=part.inline_data.mime_type or "image/png",
-                        folder=IMAGE_FOLDER,
-                    )
+                    image_bytes = part.inline_data.data
+                    content_type = part.inline_data.mime_type or "image/png"
+                    url = storage.upload_image_bytes(image_bytes, content_type=content_type, folder=IMAGE_FOLDER)
+                    return GeneratedImage(url=url, data=image_bytes, content_type=content_type)
 
             raise AIAdapterError("Gemini image 응답에 이미지 데이터가 없습니다.")
 

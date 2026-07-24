@@ -15,7 +15,7 @@ from app.core import storage
 from app.core.enums import JobStatus
 from app.db.session import SessionLocal
 from app.generations.models import Cut
-from app.generations.service import GRID_IMAGE_FOLDER, build_grid_image
+from app.generations.service import GRID_IMAGE_FOLDER, build_grid_image, download_reference_images
 from app.regenerations.models import Regeneration
 from app.storyboards.models import Storyboard
 
@@ -112,17 +112,21 @@ def _clear_stale_regeneration_urls(db: Session, cut_id: int, superseded_image_ur
     ).update({"image_url": None})
 
 
-def _rebuild_grid_if_all_completed(db: Session, storyboard: Storyboard) -> None:
+def _rebuild_grid_if_all_completed(
+    db: Session, storyboard: Storyboard, known_image_bytes: dict[str, bytes] | None = None
+) -> None:
     """9컷이 전부 완료 상태면 그리드 이미지를 재합성.
 
     ㅡ 재생성 성공한후 그리드 합성에서만 실패하는 경우도 있을 수 있으므로 함수 분리
+    ㅡ known_image_bytes: 방금 재생성한 1컷은 이미 바이트를 들고 있으므로 그 컷만 R2 재다운로드 생략
+      (나머지 8컷은 방금 재생성한 게 아니라 바이트가 없으므로 기존처럼 다운로드)
     """
     generation = storyboard.generation
     if generation is None or not all(c.status == JobStatus.COMPLETED for c in storyboard.cuts):
         return
 
     old_grid_url = generation.grid_image_url
-    grid_bytes = build_grid_image([c.image_url for c in storyboard.cuts])
+    grid_bytes = build_grid_image([c.image_url for c in storyboard.cuts], known_image_bytes=known_image_bytes)
     generation.grid_image_url = storage.upload_image_bytes(
         grid_bytes, content_type="image/jpeg", folder=GRID_IMAGE_FOLDER
     )
@@ -150,9 +154,11 @@ def run_regeneration(regeneration_id: int) -> None:
 
         old_image_url = cut.image_url
         image_adapter = get_image_adapter(storyboard.image_model)
+        # 원래 생성 때 썼던 레퍼런스를 앵커로 그대로 재전달 — 레퍼런스 없는 스토리보드는 빈 리스트라 동작 동일
+        reference_images = download_reference_images([ref.image_url for ref in storyboard.reference_images])
         try:
-            new_image_url = image_adapter.generate_image(
-                prompt_text=cut.prompt_text, aspect_ratio=storyboard.aspect_ratio
+            result = image_adapter.generate_image(
+                prompt_text=cut.prompt_text, aspect_ratio=storyboard.aspect_ratio, reference_images=reference_images
             )
         except Exception as exc:  # noqa: BLE001 — 실패해도 기존 컷 이미지/상태는 건드리지 않음
             logger.error(         # 뭐가 터지든 한 컷만 실패처리하고 나머지 흐름 안끊으려고 넓게 잡음
@@ -163,6 +169,7 @@ def run_regeneration(regeneration_id: int) -> None:
             db.commit()
             return
 
+        new_image_url = result.url
         cut.image_url = new_image_url
         cut.status = JobStatus.COMPLETED
         cut.error_message = None
@@ -183,7 +190,7 @@ def run_regeneration(regeneration_id: int) -> None:
                 )
 
         try:
-            _rebuild_grid_if_all_completed(db, storyboard)
+            _rebuild_grid_if_all_completed(db, storyboard, known_image_bytes={new_image_url: result.data})
         except Exception:
             # 컷 재생성 자체는 이미 성공했으므로, 그리드 재조립 실패는 로그만 남기고
             # regeneration.status는 COMPLETED로 유지.

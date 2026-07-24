@@ -73,9 +73,17 @@ class _FakeOpenAIImages:
     def __init__(self, responses):
         self._responses = list(responses)
         self.calls: list[dict] = []
+        self.edit_calls: list[dict] = []
 
     def generate(self, **kwargs):
         self.calls.append(kwargs)
+        response = self._responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    def edit(self, **kwargs):
+        self.edit_calls.append(kwargs)
         response = self._responses.pop(0)
         if isinstance(response, Exception):
             raise response
@@ -101,15 +109,80 @@ def _openai_status_error(cls, status_code):
 # b64: 원본 바이너리(예: 이미지 바이트) → 텍스트로 바꾸는 인코딩 방식
 class TestGptImageAdapter:
     def test_uploads_decoded_image_and_returns_url(self, _fake_r2_upload):
-        """b64 응답을 디코딩해서 R2에 업로드하고 URL을 반환하는지, size 파라미터도 맞게 넘어가는지"""
+        """b64 응답을 디코딩해서 R2에 업로드하고 URL/바이트를 반환하는지, size 파라미터도 맞게 넘어가는지"""
         b64 = "aGVsbG8="  # "hello" 를 base64 인코딩
         adapter, client = _gpt_adapter([_FakeOpenAIResponse(b64)])
 
-        url = adapter.generate_image(prompt_text="a cat", aspect_ratio="1:1")
+        result = adapter.generate_image(prompt_text="a cat", aspect_ratio="1:1")
 
-        assert url == "https://pub-x.r2.dev/cuts/fake.png"
+        assert result.url == "https://pub-x.r2.dev/cuts/fake.png"
+        assert result.data == b"hello"
+        assert result.content_type == "image/png"
         assert _fake_r2_upload[0] == (b"hello", "image/png", "cuts")
         assert client.images.calls[0]["size"] == "1024x1024"
+        assert client.images.edit_calls == []
+
+    def test_reference_images_call_edit_instead_of_generate(self, _fake_r2_upload):
+        """reference_images가 있으면 generate 대신 edit을 호출하고, 이미지들이 그대로 전달되는지"""
+        b64 = "aGVsbG8="
+        adapter, client = _gpt_adapter([_FakeOpenAIResponse(b64)])
+        reference_images = [(b"ref-a", "image/png"), (b"ref-b", "image/jpeg")]
+
+        result = adapter.generate_image(
+            prompt_text="a cat", aspect_ratio="1:1", reference_images=reference_images
+        )
+
+        assert result.url == "https://pub-x.r2.dev/cuts/fake.png"
+        assert client.images.calls == []
+        assert len(client.images.edit_calls) == 1
+        edit_call = client.images.edit_calls[0]
+        assert edit_call["prompt"].endswith("a cat")
+        assert edit_call["size"] == "1024x1024"
+        assert [img[1] for img in edit_call["image"]] == [b"ref-a", b"ref-b"]
+        assert [img[2] for img in edit_call["image"]] == ["image/png", "image/jpeg"]
+
+    def test_reference_images_prepend_usage_instruction(self, _fake_r2_upload):
+        """레퍼런스 있으면 "외형만 참고하라"는 지침이 실제 프롬프트 앞에 붙는지"""
+        from app.ai.image_adapter import REFERENCE_USAGE_INSTRUCTION
+
+        b64 = "aGVsbG8="
+        adapter, client = _gpt_adapter([_FakeOpenAIResponse(b64)])
+
+        adapter.generate_image(
+            prompt_text="a cat", reference_images=[(b"ref-a", "image/png")]
+        )
+
+        assert client.images.edit_calls[0]["prompt"] == REFERENCE_USAGE_INSTRUCTION + "a cat"
+
+    def test_no_reference_images_does_not_prepend_instruction(self, _fake_r2_upload):
+        """레퍼런스 없으면 generate에 순수 prompt_text만 그대로 전달되는지(지침 안 붙음)"""
+        b64 = "aGVsbG8="
+        adapter, client = _gpt_adapter([_FakeOpenAIResponse(b64)])
+
+        adapter.generate_image(prompt_text="a cat")
+
+        assert client.images.calls[0]["prompt"] == "a cat"
+
+    def test_unknown_reference_content_type_falls_back_to_bin_extension(self, _fake_r2_upload):
+        """content_type이 CONTENT_TYPE_EXT에 없는 값이어도 KeyError로 죽지 않고 bin 확장자로 넘어가는지"""
+        b64 = "aGVsbG8="
+        adapter, client = _gpt_adapter([_FakeOpenAIResponse(b64)])
+
+        adapter.generate_image(
+            prompt_text="a cat", reference_images=[(b"weird", "image/gif")]
+        )
+
+        assert client.images.edit_calls[0]["image"][0][0] == "reference_0.bin"
+
+    def test_no_reference_images_calls_generate(self, _fake_r2_upload):
+        """reference_images가 None/빈 리스트면 지금처럼 generate를 호출하는지"""
+        b64 = "aGVsbG8="
+        adapter, client = _gpt_adapter([_FakeOpenAIResponse(b64)])
+
+        adapter.generate_image(prompt_text="a cat", reference_images=[])
+
+        assert len(client.images.calls) == 1
+        assert client.images.edit_calls == []
 
     def test_timeout_is_not_retried(self):
         """이미지 생성은 max_retries=0이라 타임아웃 나면 재시도 없이 즉시 실패하는지 (호출 1회)
@@ -204,15 +277,17 @@ def _gemini_status_error(status_code):
 
 class TestGeminiImageAdapter:
     def test_uploads_first_image_part_and_returns_url(self, _fake_r2_upload):
-        """응답의 첫 이미지 part를 업로드하고 URL을 반환하는지, aspect_ratio가 ImageConfig에 반영되는지"""
+        """응답의 첫 이미지 part를 업로드하고 URL/바이트를 반환하는지, aspect_ratio가 ImageConfig에 반영되는지"""
         response = _FakeGeminiResponse([_FakePart(_FakeBlob(b"image-bytes"))])
         adapter, client = _gemini_adapter([response])
 
-        url = adapter.generate_image(prompt_text="a cat", aspect_ratio="16:9")
+        result = adapter.generate_image(prompt_text="a cat", aspect_ratio="16:9")
 
-        assert url == "https://pub-x.r2.dev/cuts/fake.png"
+        assert result.url == "https://pub-x.r2.dev/cuts/fake.png"
+        assert result.data == b"image-bytes"
         assert _fake_r2_upload[0] == (b"image-bytes", "image/png", "cuts")
         assert client.models.calls[0]["config"].image_config == genai_types.ImageConfig(aspect_ratio="16:9")
+        assert client.models.calls[0]["contents"] == "a cat"
 
     def test_none_aspect_ratio_defaults_to_3_2(self, _fake_r2_upload):
         """aspect_ratio 없으면 ImageConfig 자체를 생략(None)하지 않고 3:2 기본값을 명시하는지 —
@@ -223,6 +298,32 @@ class TestGeminiImageAdapter:
         adapter.generate_image(prompt_text="a cat")
 
         assert client.models.calls[0]["config"].image_config == genai_types.ImageConfig(aspect_ratio="3:2")
+
+    def test_reference_images_build_multimodal_contents(self, _fake_r2_upload):
+        """reference_images가 있으면 이미지 part들 + (지침이 붙은) 텍스트로 contents를 구성하는지"""
+        from app.ai.image_adapter import REFERENCE_USAGE_INSTRUCTION
+
+        response = _FakeGeminiResponse([_FakePart(_FakeBlob(b"image-bytes"))])
+        adapter, client = _gemini_adapter([response])
+        reference_images = [(b"ref-a", "image/png"), (b"ref-b", "image/jpeg")]
+
+        adapter.generate_image(prompt_text="a cat", reference_images=reference_images)
+
+        contents = client.models.calls[0]["contents"]
+        assert contents == [
+            genai_types.Part.from_bytes(data=b"ref-a", mime_type="image/png"),
+            genai_types.Part.from_bytes(data=b"ref-b", mime_type="image/jpeg"),
+            REFERENCE_USAGE_INSTRUCTION + "a cat",
+        ]
+
+    def test_no_reference_images_does_not_prepend_instruction(self, _fake_r2_upload):
+        """레퍼런스 없으면 contents가 순수 prompt_text 문자열 그대로인지(지침 안 붙음)"""
+        response = _FakeGeminiResponse([_FakePart(_FakeBlob(b"image-bytes"))])
+        adapter, client = _gemini_adapter([response])
+
+        adapter.generate_image(prompt_text="a cat")
+
+        assert client.models.calls[0]["contents"] == "a cat"
 
     def test_skips_non_image_parts(self, _fake_r2_upload):
         """이미지가 없는 part는 건너뛰고 실제 이미지가 있는 part를 쓰는지"""

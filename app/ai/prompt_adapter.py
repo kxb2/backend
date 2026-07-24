@@ -24,9 +24,9 @@ logger = logging.getLogger(__name__)
 # 4인+4공간 테스트후 최대토큰값 늘림
 MAX_TOKENS = 4096
 
-# 장르별 프리셋: 기본 톤/스타일/앵글 (일단 PRD 내용)
+# 장르별 프리셋: 기본 톤/스타일/앵글 (PRD 내용 → 액션/스릴러는 단어 못알아먹어서 좋아하는걸로 바꿈)
 # ㅡ tone/style은 사용자가 고급설정에서 직접 지정하면 그게 우선/ 안 넣으면 기본값 사용
-# ㅡ 드라마류는 순서까지 주면 잘 따라하는데,
+# ㅡ 드라마류, 일상류는 순서까지 주면 잘 따라하는데,
 #   액션/스릴러는 줘봤자 순서 무시해서 골라쓰라고 범위만 줌
 GENRE_PRESETS: dict[Genre, dict[str, object]] = {
     Genre.DRAMA: {
@@ -184,6 +184,27 @@ Each shot must describe, in this order: Camera -> Subject -> Action -> Setting -
   lighting jumps inconsistently from shot to shot.
 - Reflect the given genre/tone/era through concrete visual language in the Subject/Action/Setting/
   Lighting parts of each shot (not by naming the setting fields directly).
+
+REFERENCE IMAGE ROUTING (only applies when reference images are attached to this message — if none
+are attached, skip this entire section and do not output a REFMAP line at all):
+- For each attached reference image, decide whether it depicts a SPECIFIC character, prop, or place
+  that the scenario actually names or clearly identifies.
+  - If it does: this image grounds your description of that character/prop/place, and it will
+    later be shown directly (as a real photo, not just your text) to the image generator for every
+    shot where that character/prop/place appears. Assign that image's number to every one of those
+    shots.
+  - If it does not match any specific thing the scenario names (e.g. a pure mood/color/lighting
+    reference with no matching subject): do NOT assign it to any shot. Instead, let its lighting,
+    color palette, and texture inform the Lighting/Style wording you already write for all 9 shots.
+- Each shot may be assigned at most 3 reference images. Only assign ones that genuinely appear in
+  that shot — never pad up to 3. If more than 3 genuinely apply to one shot, keep character
+  references first, then props, and drop place/location references first — a character's face
+  cannot be captured by text the way a location's fixed phrase already can, so losing the location
+  photo costs less than losing the character photo.
+- After the 9 shots, output exactly one more line in exactly this format, with no other text after
+  it: `REFMAP: 1=[..]; 2=[..]; ... 9=[..]` — every shot number 1 through 9 MUST appear, in order,
+  even shots with no assigned images (write `[]` for those, do not omit the shot number). Numbers
+  inside the brackets are 1-based, in the order the reference images were attached to this message.
 """
 
 

@@ -50,6 +50,15 @@ CONTENT_TYPE_EXT = {
 
 CANVAS_ATTACHMENT_FOLDERS = ("canvas-attachments", "canvas-thumbnails")
 
+_EXT_TO_CONTENT_TYPE = {ext: content_type for content_type, ext in CONTENT_TYPE_EXT.items()}
+
+
+def content_type_from_url(url: str) -> str:
+    """R2 공개 URL의 확장자로 content-type을 복원(레퍼런스 이미지는 DB에 URL만 저장되어 있어서
+    다시 내려받을 때 필요). 알 수 없는 확장자면 기본값으로 PNG 취급."""
+    ext = url.rsplit(".", 1)[-1].lower()
+    return _EXT_TO_CONTENT_TYPE.get(ext, "image/png")
+
 
 def is_canvas_attachment_url(url: str) -> bool:
     """캔버스 첨부 업로드가 소유한 R2 파일인지 확인.

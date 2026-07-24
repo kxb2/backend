@@ -9,11 +9,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.ai.base import GeneratedImage
 from app.core.enums import Genre, ImageModel, JobStatus
 from app.db.base import Base
 from app.generations import service
 from app.generations.models import Cut, Generation
-from app.storyboards.models import Storyboard
+from app.storyboards.models import ReferenceImage, Storyboard
 
 
 @pytest.fixture
@@ -30,7 +31,7 @@ def _patch_session_local(monkeypatch, session_factory):
     monkeypatch.setattr(service, "SessionLocal", session_factory)
 
 
-def _create_storyboard(session_factory) -> int:
+def _create_storyboard(session_factory, reference_image_urls: list[str] | None = None) -> int:
     """스토리보드 생성 함수 대충 흉내"""
     db = session_factory()
     try:
@@ -43,6 +44,8 @@ def _create_storyboard(session_factory) -> int:
         db.add(Generation(storyboard_id=storyboard.id, status=JobStatus.PENDING))
         for order_no in range(1, 10):
             db.add(Cut(storyboard_id=storyboard.id, order_no=order_no, status=JobStatus.PENDING))
+        for url in reference_image_urls or []:
+            db.add(ReferenceImage(storyboard_id=storyboard.id, image_url=url))
 
         db.commit()
         return storyboard.id
@@ -84,10 +87,26 @@ class _FakeMalformedPromptAdapter:
 class _FakeImageAdapter:
     def __init__(self):
         self.calls = 0
+        self.reference_images_by_call: list[list | None] = []
+        # (prompt_text, reference_images) 쌍 — 스레드풀 실행 순서와 무관하게 어느 컷 호출인지 상관관계 확인용
+        self.calls_detail: list[tuple[str, list]] = []
 
-    def generate_image(self, *, prompt_text, aspect_ratio=None) -> str:
+    def generate_image(self, *, prompt_text, aspect_ratio=None, reference_images=None) -> GeneratedImage:
         self.calls += 1
-        return f"https://pub-x.r2.dev/cuts/{self.calls}.png"
+        self.reference_images_by_call.append(reference_images)
+        self.calls_detail.append((prompt_text, reference_images))
+        url = f"https://pub-x.r2.dev/cuts/{self.calls}.png"
+        return GeneratedImage(url=url, data=url.encode(), content_type="image/png")
+
+
+class _FakeRefmapPromptAdapter:
+    """Claude가 9컷 + REFMAP 줄까지 같이 응답했다고 치는 fake"""
+
+    def __init__(self, refmap_line: str):
+        self._refmap_line = refmap_line
+
+    def generate_prompt(self, **_kwargs) -> str:
+        return _integrated_prompt() + "\n" + self._refmap_line
 
 
 class TestRunGenerationHappyPath:
@@ -95,7 +114,7 @@ class TestRunGenerationHappyPath:
     def test_completes_generation_and_all_cuts_with_grid_image(self, monkeypatch, session_factory):
         monkeypatch.setattr(service, "ClaudePromptAdapter", _FakePromptAdapter)
         monkeypatch.setattr(service, "get_image_adapter", lambda image_model: _FakeImageAdapter())
-        monkeypatch.setattr(service, "build_grid_image", lambda urls: b"fake-grid-bytes")
+        monkeypatch.setattr(service, "build_grid_image", lambda urls, known_image_bytes=None: b"fake-grid-bytes")
         monkeypatch.setattr(
             service.storage,
             "upload_image_bytes",
@@ -111,6 +130,125 @@ class TestRunGenerationHappyPath:
         assert len(cuts) == 9
         assert all(cut.status == JobStatus.COMPLETED for cut in cuts)
         assert all(cut.image_url for cut in cuts)
+
+
+class TestRunGenerationWithReferenceImages:
+    def test_downloads_references_once_and_shares_across_all_cuts(self, monkeypatch, session_factory):
+        """레퍼런스가 있으면 한 번만 다운로드해서 9개 컷 호출 전부에 같은 객체를 공유하는지"""
+        monkeypatch.setattr(service, "ClaudePromptAdapter", _FakePromptAdapter)
+        image_adapter = _FakeImageAdapter()
+        monkeypatch.setattr(service, "get_image_adapter", lambda image_model: image_adapter)
+        monkeypatch.setattr(service, "build_grid_image", lambda urls, known_image_bytes=None: b"fake-grid-bytes")
+        monkeypatch.setattr(
+            service.storage,
+            "upload_image_bytes",
+            lambda data, content_type, folder: "https://pub-x.r2.dev/grids/fake.png",
+        )
+        download_calls = []
+
+        def _fake_download_reference_images(urls):
+            download_calls.append(urls)
+            return [(b"ref-bytes", "image/png")]
+
+        monkeypatch.setattr(service, "download_reference_images", _fake_download_reference_images)
+
+        storyboard_id = _create_storyboard(session_factory, reference_image_urls=["https://pub-x.r2.dev/refs/a.png"])
+        service.run_generation(storyboard_id)
+
+        assert download_calls == [["https://pub-x.r2.dev/refs/a.png"]]
+        assert len(image_adapter.reference_images_by_call) == 9
+        assert all(refs == [(b"ref-bytes", "image/png")] for refs in image_adapter.reference_images_by_call)
+
+        generation, _cuts = _load(session_factory, storyboard_id)
+        assert generation.status == JobStatus.COMPLETED
+
+    def test_download_failure_falls_back_to_no_reference_instead_of_failing_all_cuts(
+        self, monkeypatch, session_factory
+    ):
+        """레퍼런스 다운로드 자체가 실패해도(R2 순단 등) 9컷 전체를 죽이지 않고 텍스트 기반으로 진행하는지"""
+        monkeypatch.setattr(service, "ClaudePromptAdapter", _FakePromptAdapter)
+        image_adapter = _FakeImageAdapter()
+        monkeypatch.setattr(service, "get_image_adapter", lambda image_model: image_adapter)
+        monkeypatch.setattr(service, "build_grid_image", lambda urls, known_image_bytes=None: b"fake-grid-bytes")
+        monkeypatch.setattr(
+            service.storage,
+            "upload_image_bytes",
+            lambda data, content_type, folder: "https://pub-x.r2.dev/grids/fake.png",
+        )
+
+        def _boom(urls):
+            raise RuntimeError("R2 network blip")
+
+        monkeypatch.setattr(service, "download_reference_images", _boom)
+
+        storyboard_id = _create_storyboard(session_factory, reference_image_urls=["https://pub-x.r2.dev/refs/a.png"])
+        service.run_generation(storyboard_id)
+
+        assert all(refs == [] for refs in image_adapter.reference_images_by_call)
+        generation, cuts = _load(session_factory, storyboard_id)
+        assert generation.status == JobStatus.COMPLETED
+        assert all(cut.status == JobStatus.COMPLETED for cut in cuts)
+
+
+class TestRunGenerationWithRefmap:
+    def _setup(self, monkeypatch, refmap_line, bytes_by_url):
+        monkeypatch.setattr(service, "ClaudePromptAdapter", lambda: _FakeRefmapPromptAdapter(refmap_line))
+        image_adapter = _FakeImageAdapter()
+        monkeypatch.setattr(service, "get_image_adapter", lambda image_model: image_adapter)
+        monkeypatch.setattr(service, "build_grid_image", lambda urls, known_image_bytes=None: b"fake-grid-bytes")
+        monkeypatch.setattr(
+            service.storage,
+            "upload_image_bytes",
+            lambda data, content_type, folder: "https://pub-x.r2.dev/grids/fake.png",
+        )
+        monkeypatch.setattr(service.storage, "download_bytes", lambda url: bytes_by_url[url])
+        return image_adapter
+
+    def test_routes_different_references_per_cut(self, monkeypatch, session_factory):
+        """REFMAP대로 컷마다 다른 레퍼런스가 실제 이미지 생성 호출에 전달되는지"""
+        bytes_by_url = {
+            "https://pub-x.r2.dev/refs/1.png": b"person",
+            "https://pub-x.r2.dev/refs/2.png": b"place",
+        }
+        refmap_line = "REFMAP: 1=[1]; 2=[2]; 3=[]; 4=[]; 5=[]; 6=[]; 7=[]; 8=[]; 9=[]"
+        image_adapter = self._setup(monkeypatch, refmap_line, bytes_by_url)
+
+        storyboard_id = _create_storyboard(session_factory, reference_image_urls=list(bytes_by_url))
+        service.run_generation(storyboard_id)
+
+        generation, _cuts = _load(session_factory, storyboard_id)
+        assert generation.status == JobStatus.COMPLETED
+
+        calls_by_prompt = dict(image_adapter.calls_detail)
+        assert calls_by_prompt["description for shot 1 with enough detail"] == [(b"person", "image/png")]
+        assert calls_by_prompt["description for shot 2 with enough detail"] == [(b"place", "image/png")]
+        # REFMAP에서 빈 배정(명시적)된 컷은 레퍼런스 없이 텍스트만
+        assert calls_by_prompt["description for shot 3 with enough detail"] == []
+
+    def test_missing_cut_falls_back_to_first_n_others_stay_routed(self, monkeypatch, session_factory):
+        """REFMAP에서 특정 컷 번호가 누락되면 그 컷만 앞 N장 폴백, 나머지는 정상 라우팅 유지"""
+        bytes_by_url = {
+            "https://pub-x.r2.dev/refs/1.png": b"person",
+            "https://pub-x.r2.dev/refs/2.png": b"place",
+        }
+        # 컷 3이 REFMAP에서 통째로 빠짐(나머지 8개는 명시)
+        refmap_line = "REFMAP: 1=[1]; 2=[2]; 4=[]; 5=[]; 6=[]; 7=[]; 8=[]; 9=[]"
+        image_adapter = self._setup(monkeypatch, refmap_line, bytes_by_url)
+
+        storyboard_id = _create_storyboard(session_factory, reference_image_urls=list(bytes_by_url))
+        service.run_generation(storyboard_id)
+
+        generation, _cuts = _load(session_factory, storyboard_id)
+        assert generation.status == JobStatus.COMPLETED
+
+        calls_by_prompt = dict(image_adapter.calls_detail)
+        # 컷 3은 누락됐으니 앞 2장(1,2번 다) 폴백
+        assert calls_by_prompt["description for shot 3 with enough detail"] == [
+            (b"person", "image/png"), (b"place", "image/png"),
+        ]
+        # 나머지는 REFMAP 그대로
+        assert calls_by_prompt["description for shot 1 with enough detail"] == [(b"person", "image/png")]
+        assert calls_by_prompt["description for shot 4 with enough detail"] == []
 
 
 class TestRunGenerationPromptFailure:
@@ -140,7 +278,7 @@ class TestRunGenerationUnexpectedException:
         monkeypatch.setattr(service, "ClaudePromptAdapter", _FakePromptAdapter)
         monkeypatch.setattr(service, "get_image_adapter", lambda image_model: _FakeImageAdapter())
 
-        def _boom(urls):
+        def _boom(urls, known_image_bytes=None):
             raise RuntimeError("grid build failed")
 
         monkeypatch.setattr(service, "build_grid_image", _boom)
