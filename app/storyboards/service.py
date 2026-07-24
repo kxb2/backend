@@ -11,7 +11,7 @@ from app.exports.models import Export
 from app.generations.models import Cut, Generation
 from app.regenerations.models import Regeneration
 from app.storyboards.models import ReferenceImage, Storyboard
-from app.storyboards.schemas import StoryboardListItem
+from app.storyboards.schemas import GenerationSummary, StoryboardDetailResponse, StoryboardListItem
 
 logger = logging.getLogger(__name__)
 
@@ -152,8 +152,48 @@ def list_storyboards(db: Session, limit: int = DEFAULT_LIST_LIMIT) -> list[Story
 
 
 def get_storyboard(db: Session, storyboard_id: int) -> Storyboard | None:
-    """스토리보드 조회"""
+    """스토리보드 조회 (raw ORM — /prompt 등 storyboard 컬럼만 필요한 곳에서 사용)"""
     return db.get(Storyboard, storyboard_id)
+
+
+def get_storyboard_detail(db: Session, storyboard_id: int) -> StoryboardDetailResponse | None:
+    """스토리보드 개별조회 (9컷 생성 결과 포함)
+
+    ㅡ Generation 모델엔 cuts 관계가 없어서(컷은 storyboard.cuts로 붙어있음) from_attributes
+      자동 매핑이 안 되므로, generation 필드는 storyboard.cuts를 합쳐서 직접 만들어준다.
+    """
+    storyboard = (
+        db.query(Storyboard)
+        .options(joinedload(Storyboard.generation), joinedload(Storyboard.cuts))
+        .filter(Storyboard.id == storyboard_id)
+        .first()
+    )
+    if storyboard is None:
+        return None
+
+    generation = None
+    if storyboard.generation:
+        generation = GenerationSummary(
+            id=storyboard.generation.id,
+            status=storyboard.generation.status,
+            grid_image_url=storyboard.generation.grid_image_url,
+            cuts=storyboard.cuts,
+        )
+
+    return StoryboardDetailResponse(
+        id=storyboard.id,
+        title=storyboard.title,
+        scenario_text=storyboard.scenario_text,
+        genre=storyboard.genre,
+        style=storyboard.style,
+        tone=storyboard.tone,
+        aspect_ratio=storyboard.aspect_ratio,
+        era=storyboard.era,
+        image_model=storyboard.image_model,
+        reference_images=storyboard.reference_images,
+        generation=generation,
+        created_at=storyboard.created_at,
+    )
 
 
 def _raise_if_generation_in_progress(db: Session, storyboard_id: int) -> None:
