@@ -196,3 +196,65 @@ class TestDeleteStoryboardGuards:
             assert deleted_urls == []
         finally:
             db.close()
+
+
+class TestGetStoryboardDetail:
+    """개별조회(get_storyboard_detail)가 9컷 생성 결과(generation/cuts)까지 포함해서 내려주는지."""
+
+    def test_returns_none_when_not_found(self, session_factory):
+        db = session_factory()
+        try:
+            assert service.get_storyboard_detail(db, 999) is None
+        finally:
+            db.close()
+
+    def test_includes_generation_and_cuts_when_present(self, session_factory):
+        db = session_factory()
+        try:
+            storyboard = Storyboard(scenario_text="test", genre=Genre.DRAMA, image_model=ImageModel.GPT_IMAGE)
+            db.add(storyboard)
+            db.flush()
+            db.add(
+                Generation(
+                    storyboard_id=storyboard.id,
+                    status=JobStatus.COMPLETED,
+                    grid_image_url="https://pub-x.r2.dev/grids/1.jpg",
+                )
+            )
+            for order_no in range(1, 3):
+                db.add(
+                    Cut(
+                        storyboard_id=storyboard.id,
+                        order_no=order_no,
+                        status=JobStatus.COMPLETED,
+                        image_url=f"https://pub-x.r2.dev/cuts/{order_no}.png",
+                    )
+                )
+            db.commit()
+            storyboard_id = storyboard.id
+
+            detail = service.get_storyboard_detail(db, storyboard_id)
+
+            assert detail is not None
+            assert detail.generation is not None
+            assert detail.generation.status == JobStatus.COMPLETED
+            assert detail.generation.grid_image_url == "https://pub-x.r2.dev/grids/1.jpg"
+            assert [cut.order_no for cut in detail.generation.cuts] == [1, 2]
+        finally:
+            db.close()
+
+    def test_generation_is_none_when_not_yet_created(self, session_factory):
+        """생성 직후(9컷 생성 전) storyboard는 generation이 없을 수 있음"""
+        db = session_factory()
+        try:
+            storyboard = Storyboard(scenario_text="test", genre=Genre.DRAMA, image_model=ImageModel.GPT_IMAGE)
+            db.add(storyboard)
+            db.commit()
+            storyboard_id = storyboard.id
+
+            detail = service.get_storyboard_detail(db, storyboard_id)
+
+            assert detail is not None
+            assert detail.generation is None
+        finally:
+            db.close()

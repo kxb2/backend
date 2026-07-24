@@ -4,7 +4,12 @@ import pytest
 from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 
-from app.ai.exceptions import AIAdapterError, AIAdapterRequestError, AIAdapterUnavailableError
+from app.ai.exceptions import (
+    AIAdapterError,
+    AIAdapterRequestError,
+    AIAdapterTimeoutError,
+    AIAdapterUnavailableError,
+)
 from app.ai.image_adapter import (
     GeminiImageAdapter,
     GptImageAdapter,
@@ -106,14 +111,17 @@ class TestGptImageAdapter:
         assert _fake_r2_upload[0] == (b"hello", "image/png", "cuts")
         assert client.images.calls[0]["size"] == "1024x1024"
 
-    def test_timeout_is_retried_then_succeeds(self):
-        """타임아웃 나면 재시도해서 성공하는지 (호출 2회)"""
+    def test_timeout_is_not_retried(self):
+        """이미지 생성은 max_retries=0이라 타임아웃 나면 재시도 없이 즉시 실패하는지 (호출 1회)
+        — 재생성 프론트 타임아웃(120초) 예산에 timeout(90초)만으로 이미 거의 다 차서
+        재시도를 넣으면 예산을 넘김. 실패한 컷은 사용자가 재생성 버튼으로 다시 시도"""
         request = httpx.Request("POST", "https://api.openai.com/v1/images/generations")
-        adapter, client = _gpt_adapter([openai.APITimeoutError(request=request), _FakeOpenAIResponse("aGk=")])
+        adapter, client = _gpt_adapter([openai.APITimeoutError(request=request)])
 
-        adapter.generate_image(prompt_text="a cat")
+        with pytest.raises(AIAdapterTimeoutError):
+            adapter.generate_image(prompt_text="a cat")
 
-        assert len(client.images.calls) == 2
+        assert len(client.images.calls) == 1
 
     def test_bad_request_is_not_retried(self):
         """400(잘못된 요청)은 재시도 안 하는지 (호출 1회)"""
@@ -124,13 +132,14 @@ class TestGptImageAdapter:
 
         assert len(client.images.calls) == 1
 
-    def test_rate_limit_is_retryable(self):
-        """429(너무 많은 요청)는 재시도 대상인지 (호출 2회)"""
-        adapter, client = _gpt_adapter([_openai_status_error(openai.RateLimitError, 429), _FakeOpenAIResponse("aGk=")])
+    def test_rate_limit_is_not_retried(self):
+        """429(너무 많은 요청)도 max_retries=0이라 재시도 없이 즉시 실패하는지 (호출 1회)"""
+        adapter, client = _gpt_adapter([_openai_status_error(openai.RateLimitError, 429)])
 
-        adapter.generate_image(prompt_text="a cat")
+        with pytest.raises(AIAdapterUnavailableError):
+            adapter.generate_image(prompt_text="a cat")
 
-        assert len(client.images.calls) == 2
+        assert len(client.images.calls) == 1
 
     def test_missing_image_data_raises(self):
         """응답에 이미지 데이터(b64_json)가 없으면 에러 나는지"""
@@ -241,23 +250,23 @@ class TestGeminiImageAdapter:
 
         assert len(client.models.calls) == 1
 
-    def test_server_error_status_is_retryable(self, _fake_r2_upload):
-        """503(서버 에러, 일시적 오류)은 재시도해서 성공하는지"""
-        response = _FakeGeminiResponse([_FakePart(_FakeBlob(b"bytes"))])
-        adapter, client = _gemini_adapter([_gemini_status_error(503), response])
+    def test_server_error_status_is_not_retried(self):
+        """503(서버 에러, 일시적 오류)도 max_retries=0이라 재시도 없이 즉시 실패하는지"""
+        adapter, client = _gemini_adapter([_gemini_status_error(503)])
 
-        adapter.generate_image(prompt_text="a cat")
+        with pytest.raises(AIAdapterUnavailableError):
+            adapter.generate_image(prompt_text="a cat")
 
-        assert len(client.models.calls) == 2
+        assert len(client.models.calls) == 1
 
-    def test_timeout_is_retryable(self, _fake_r2_upload):
-        """타임아웃도 재시도해서 성공하는지"""
-        response = _FakeGeminiResponse([_FakePart(_FakeBlob(b"bytes"))])
-        adapter, client = _gemini_adapter([httpx.TimeoutException("timed out"), response])
+    def test_timeout_is_not_retried(self):
+        """타임아웃도 max_retries=0이라 재시도 없이 즉시 실패하는지"""
+        adapter, client = _gemini_adapter([httpx.TimeoutException("timed out")])
 
-        adapter.generate_image(prompt_text="a cat")
+        with pytest.raises(AIAdapterTimeoutError):
+            adapter.generate_image(prompt_text="a cat")
 
-        assert len(client.models.calls) == 2
+        assert len(client.models.calls) == 1
 
 
 class _FakeSettings:

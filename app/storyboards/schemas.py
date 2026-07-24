@@ -2,11 +2,13 @@ from datetime import datetime
 
 from app.core.enums import Genre, ImageModel, JobStatus
 from app.core.schema import CamelModel
+from app.generations.schemas import CutOut
 
 __all__ = [
     "Genre",
     "ImageModel",
     "ReferenceImageOut",
+    "GenerationSummary",
     "StoryboardCreateResponse",
     "StoryboardListItem",
     "StoryboardDetailResponse",
@@ -35,6 +37,13 @@ class StoryboardListItem(CamelModel):
     updated_at: datetime
 
 
+class GenerationSummary(CamelModel):
+    id: int
+    status: JobStatus
+    grid_image_url: str | None
+    cuts: list[CutOut]
+
+
 class StoryboardDetailResponse(CamelModel):
     id: int
     title: str | None
@@ -46,6 +55,7 @@ class StoryboardDetailResponse(CamelModel):
     era: str | None
     image_model: ImageModel
     reference_images: list[ReferenceImageOut]
+    generation: GenerationSummary | None
     created_at: datetime
 
 
